@@ -199,6 +199,30 @@ screenshotter https://app.example.com --auth .auth/example.json
 `--out` defaults to a path under `.auth/`; `--mode web|mobile` matches the device
 profile you'll capture with.
 
+#### OAuth / SSO / passwordless logins (no email + password field)
+
+Many apps only offer **"Continue with Google / GitHub / SSO"** (or magic links) — there
+is no username/password form to autofill, so `--basic-auth` and form login below do
+**not** apply. The saved-session flow above is exactly the answer: run `login`, click
+the provider button in the browser it opens, complete the provider flow (2FA / captcha
+included), press Enter, and capture with `--auth`.
+
+```bash
+screenshotter login https://api.together.ai      # click "Continue with Google/GitHub/SSO", finish, press Enter
+screenshotter https://api.together.ai --full --extract --api --auth .auth/together.json
+```
+
+It doesn't matter which provider is used — `login` persists the app's resulting
+session *after* the redirect. **Popup-based OAuth works too**: the provider popup
+shares the browser context, so its cookies and the app's post-login token both land in
+the saved session. Two caveats:
+
+- **Expiry** — OAuth/SSO sessions are often short-lived, and auto re-auth (`--reauth`)
+  only works for *form* login (it has the credentials); it can't replay an OAuth click.
+  So for a long crawl, run `login` right before launching, and re-run it if
+  `run-manifest.json` reports `anonymous` routes.
+- `.auth/*.json` is a live credential — it's gitignored; never commit or share it.
+
 ### HTTP Basic auth
 
 ```bash
