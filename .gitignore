@@ -1,7 +1,9 @@
 node_modules/
-dist/
-output/
+# Anchored to the repo root so these match ONLY the build/capture artifacts —
+# NOT source dirs like src/output/ (an unanchored `output/` wrongly ignored it).
+/dist/
+/output/
 *-screenshots.zip
 *.log
 .DS_Store
-.auth/
+/.auth/
