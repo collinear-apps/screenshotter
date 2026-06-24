@@ -1,0 +1,7 @@
+node_modules/
+dist/
+output/
+*-screenshots.zip
+*.log
+.DS_Store
+.auth/

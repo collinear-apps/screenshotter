@@ -1,0 +1,6 @@
+{
+  "name": "screenshotter",
+  "version": "0.1.0",
+  "description": "Capture full-page screenshots and an extracted typography.md of any website, bundled into a zip.",
+  "mcpServers": "./.mcp.json"
+}

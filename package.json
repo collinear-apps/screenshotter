@@ -1,0 +1,53 @@
+{
+  "name": "screenshotter",
+  "version": "0.1.0",
+  "description": "Reusable CLI that captures high-quality full-page screenshots of a website and an auto-extracted typography.md, bundled into a zip.",
+  "bin": {
+    "screenshotter": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "commands",
+    ".mcp.json",
+    ".claude-plugin",
+    "README.md",
+    "USAGE.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "screenshot": "node dist/index.js",
+    "prepare": "npm run build",
+    "postinstall": "node -e \"try{require('child_process').execSync('npx --no-install playwright install chromium',{stdio:'inherit'})}catch(e){console.warn('\\n[screenshotter] Could not auto-install Chromium. Run: npx playwright install chromium\\n')}\"",
+    "setup": "npx playwright install chromium"
+  },
+  "keywords": [
+    "screenshot",
+    "playwright",
+    "scraper",
+    "website-clone",
+    "rebuild",
+    "cli"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "archiver": "^7.0.1",
+    "commander": "^12.1.0",
+    "picocolors": "^1.1.1",
+    "playwright": "^1.49.0",
+    "prompts": "^2.4.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/archiver": "^6.0.3",
+    "@types/node": "^22.10.0",
+    "@types/prompts": "^2.4.9",
+    "typescript": "^5.7.2"
+  }
+}
