@@ -54,9 +54,11 @@ export function slugForUrl(url: string): string {
 }
 
 /**
- * Relative path of a screenshot within outDir, clustered by category:
- *   e.g. "web/models/01-models-gpt2.png"
- * `index` is the 1-based position WITHIN its category (caller assigns it).
+ * Relative path of a screenshot within outDir, under a dedicated `screenshots/`
+ * folder clustered by category:
+ *   e.g. "web/screenshots/models/01-models-gpt2.png"
+ * Per-page DOM/a11y/readme siblings land alongside; breakpoint variants get an
+ * `@<bp>` suffix on the PNG. `index` is the 1-based position WITHIN its category.
  */
 export function screenshotRelPath(
   mode: Mode,
@@ -64,5 +66,5 @@ export function screenshotRelPath(
   index: number,
   url: string,
 ): string {
-  return `${mode}/${sanitizeSegment(category)}/${String(index).padStart(2, '0')}-${slugForUrl(url)}.png`;
+  return `${mode}/screenshots/${sanitizeSegment(category)}/${String(index).padStart(2, '0')}-${slugForUrl(url)}.png`;
 }

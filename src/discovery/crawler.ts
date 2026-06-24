@@ -327,6 +327,16 @@ function categoryFromUrl(raw: string): string {
   }
 }
 
+/**
+ * Let a client-rendered SPA paint before we read its links. At `domcontentloaded`
+ * a React/Next.js dashboard's <a href> nav doesn't exist yet — so without this the
+ * crawler discovers only the entry page. Best-effort; never throws.
+ */
+async function settleForLinks(page: Page): Promise<void> {
+  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+  await page.waitForTimeout(600);
+}
+
 export async function crawl(
   context: BrowserContext,
   cfg: RunConfig,
@@ -378,6 +388,10 @@ export async function crawl(
 
       // Only extract links if we'd still follow them (depth budget remains).
       if (depth < cfg.depth) {
+        // Let client-rendered SPAs (Next.js/React dashboards) paint their nav
+        // BEFORE reading links — at domcontentloaded the <a href>s don't exist yet,
+        // which is why a SPA would otherwise discover only the entry page.
+        await settleForLinks(page);
         hrefs = await page.evaluate(() =>
           Array.from(document.querySelectorAll('a[href]')).map(
             (a) => (a as HTMLAnchorElement).href,
@@ -436,6 +450,7 @@ async function harvestLinks(
   try {
     page = await context.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await settleForLinks(page); // let SPA nav render before reading links
     return await page.evaluate(() =>
       Array.from(document.querySelectorAll('a[href]')).map(
         (a) => (a as HTMLAnchorElement).href,

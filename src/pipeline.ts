@@ -135,6 +135,8 @@ export async function run(
   const startedAtISO = new Date().toISOString();
   const routeRecords: RouteCaptureRecord[] = [];
   let reauthInFlight: Promise<void> | null = null;
+  // Total screenshots written across all passes (for the summary).
+  let variantShots = 0;
   try {
     // 0. Form login (once) when configured and no saved session is in use.
     if (cfg.auth?.formLogin && !cfg.auth.storageState) {
@@ -521,6 +523,7 @@ export async function run(
         } finally {
           await closeSession(session2);
         }
+        variantShots += vdone;
         logger.info(pc.dim(`Variant ${suffix}: ${vdone}/${planned.length} screenshot(s)`));
       }
     }
@@ -829,6 +832,23 @@ export async function run(
     }
   }
   logger.info(`  Output dir: ${pc.cyan(cfg.outDir)}`);
+  // Total screenshots written: one per captured page + breakpoint/dark variants +
+  // per-interaction-state shots from the explorer.
+  const pageShots = succeeded.filter((r) => r.screenshotPath).length;
+  const exploreShots = exploreResults.reduce(
+    (n, er) => n + er.actions.filter((a) => a.screenshot).length,
+    0,
+  );
+  const totalShots = pageShots + variantShots + exploreShots;
+  logger.info(
+    `  Screenshots: ${pc.cyan(String(totalShots))} ` +
+      pc.dim(
+        `(${pageShots} page` +
+          (variantShots > 0 ? `, ${variantShots} responsive/dark` : '') +
+          (exploreShots > 0 ? `, ${exploreShots} interaction-state` : '') +
+          `) → ${path.join(cfg.mode, 'screenshots')}/`,
+      ),
+  );
   if (apiSummary) {
     logger.info(
       `  API: ${pc.cyan(
@@ -868,5 +888,6 @@ export async function run(
     downloads: downloadCount,
     bundleIndexPath,
     manifestPath,
+    screenshots: totalShots,
   };
 }

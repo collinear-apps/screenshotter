@@ -518,6 +518,8 @@ export interface RunResult {
   manifestPath?: string;
   /** Path to the bundle index (Phase 4). */
   bundleIndexPath?: string;
+  /** Total screenshots written (pages + breakpoint/dark variants + interaction states). */
+  screenshots?: number;
 }
 
 /** Minimal logging sink so callers control where progress goes (stdout vs stderr). */
