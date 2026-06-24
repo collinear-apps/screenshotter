@@ -105,6 +105,41 @@ const REL_KEYS: { keys: string[]; rel: string; toType: string }[] = [
   { keys: ['dataset', 'datasets', 'trainedOn', 'trained_on'], rel: 'uses-dataset', toType: 'dataset' },
 ];
 
+/** Types whose id has an `owner/name` namespace we can link to an author. */
+const OWNED_TYPES = new Set(['model', 'dataset', 'space', 'collection', 'paper']);
+
+/**
+ * Split a namespaced identifier ("owner/name", e.g. "zai-org/GLM-5.2") into its
+ * owner + name. Works for any owner/name scheme (HF, GitHub, npm scopes). Returns
+ * undefined when there's no namespace (a bare slug).
+ */
+function ownerName(id: string): { owner: string; name: string } | undefined {
+  const parts = String(id).split('/').filter(Boolean);
+  if (parts.length >= 2) {
+    return { owner: parts[parts.length - 2], name: parts[parts.length - 1] };
+  }
+  return undefined;
+}
+
+/**
+ * Derive a canonical `owner/name` (or bare `name`) id from a detail href, dropping
+ * leading section prefixes (`/datasets/owner/name` → `owner/name`,
+ * `/zai-org/GLM-5.2` → `zai-org/GLM-5.2`). This PRESERVES the owner the old
+ * last-segment logic discarded — which is what makes author links possible.
+ */
+function idFromHref(href: string): string | undefined {
+  let segs: string[];
+  try {
+    segs = new URL(href).pathname.split('/').filter(Boolean);
+  } catch {
+    segs = String(href).split('/').filter(Boolean);
+  }
+  while (segs.length > 2 && TYPE_MAP[segs[0].toLowerCase()]) segs.shift();
+  if (segs.length >= 2) return `${segs[segs.length - 2]}/${segs[segs.length - 1]}`;
+  if (segs.length === 1) return segs[0];
+  return undefined;
+}
+
 /**
  * Build a normalized entity/relationship graph from captured API JSON + listing
  * rows. Pure, defensive, never throws. Dedupes entities by type/id; merges fields.
@@ -134,6 +169,17 @@ export function buildEntityGraph(input: EntityInput): EntityGraph {
     if (relSet.has(k)) return;
     relSet.add(k);
     relationships.push({ from, to, rel });
+  };
+
+  // For a namespaced entity (model/dataset/space "owner/name"), upsert the owner
+  // as a user and link entity —author→ user/owner. This is the dominant HF
+  // relationship (the author lives in the id, not a body field).
+  const linkOwner = (type: string, id: string): void => {
+    if (!OWNED_TYPES.has(type)) return;
+    const on = ownerName(id);
+    if (!on) return;
+    upsert('user', on.owner, {});
+    addRel(refKey(type, id), refKey('user', on.owner), 'author');
   };
 
   // Add relationships from a record's known author/org/dataset keys.
@@ -188,6 +234,7 @@ export function buildEntityGraph(input: EntityInput): EntityGraph {
     if (!id) return;
     upsert(type, id, pickFields(rec), url);
     linkRecord(type, id, rec);
+    linkOwner(type, id);
   };
 
   // ── 1. Fixtures: derive entity type from the path, ingest the response body. ──
@@ -216,19 +263,16 @@ export function buildEntityGraph(input: EntityInput): EntityGraph {
     const type = ti || 'item';
     listing.rows.forEach((row: ListingRow, i: number) => {
       const fields: Record<string, unknown> = { ...(row.fields || {}) };
-      // Prefer an id from the row href's last path segment, else title, else index.
+      // Prefer a canonical owner/name id from the href (preserves the owner so we
+      // can link the author), else title, else index.
       let id: string | undefined;
-      if (row.href) {
-        try {
-          const segs = new URL(row.href).pathname.split('/').filter(Boolean);
-          id = segs[segs.length - 1];
-        } catch {
-          /* ignore */
-        }
-      }
+      if (row.href) id = idFromHref(row.href);
       if (!id) id = (row.fields?.title || row.fields?.link || '').slice(0, 80) || undefined;
       if (!id) id = `${listing.page}-${i}`;
       upsert(type, id, fields, row.href);
+      // Link the author from the namespaced id, and from any author/org row field.
+      linkOwner(type, id);
+      linkRecord(type, id, fields);
     });
   }
 

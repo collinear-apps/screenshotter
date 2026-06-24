@@ -11,6 +11,7 @@ import type {
   ExploreResult,
   ListingExtract,
   Mode,
+  PageTarget,
 } from '../types';
 import { buildBehaviors } from '../explore/behaviors';
 import { buildAllQcTasks, renderQcMd } from './generate';
@@ -137,6 +138,27 @@ async function loadBehaviors(modeDir: string): Promise<BehaviorBundle | undefine
   return undefined;
 }
 
+/**
+ * Reconstruct the discovered page targets from `<modeDir>/run-manifest.json`
+ * (deduped by URL, since the manifest records one row per breakpoint variant).
+ * Lets the standalone command regenerate coverage tasks that the pipeline built
+ * from its in-memory target list.
+ */
+async function loadTargets(modeDir: string): Promise<PageTarget[]> {
+  const manifest = await readJson<{ routes?: { url: string; label: string; category?: string }[] }>(
+    path.join(modeDir, 'run-manifest.json'),
+  );
+  const rows = Array.isArray(manifest?.routes) ? manifest!.routes : [];
+  const seen = new Set<string>();
+  const out: PageTarget[] = [];
+  for (const r of rows) {
+    if (!r || !r.url || seen.has(r.url)) continue;
+    seen.add(r.url);
+    out.push({ url: r.url, label: r.label, category: r.category });
+  }
+  return out;
+}
+
 /** Load captured API fixtures from `<modeDir>/api/fixtures/*.json` (best-effort). */
 async function loadFixtures(modeDir: string): Promise<ApiFixture[]> {
   const dir = path.join(modeDir, 'api', 'fixtures');
@@ -203,16 +225,17 @@ export async function runQc(bundleDir: string, opts: QcCommandOptions): Promise<
   const fixtures = await loadFixtures(modeDir);
   const entityGraph = await loadEntityGraph(modeDir);
   const listings = await loadListings(modeDir);
+  const targets = await loadTargets(modeDir);
 
-  if (!bundle && fixtures.length === 0 && listings.length === 0) {
+  if (!bundle && fixtures.length === 0 && listings.length === 0 && targets.length === 0) {
     process.stderr.write(
       `No QC inputs found under ${modeDir}: expected explore/behaviors.json, ` +
-        'api/fixtures/, or extract/listings/. Run a --full / --api / --extract capture first.\n',
+        'api/fixtures/, extract/listings/, or run-manifest.json. Run a capture first.\n',
     );
     return 2;
   }
 
-  const tasks = buildAllQcTasks({ behaviors: bundle, fixtures, entityGraph, listings });
+  const tasks = buildAllQcTasks({ behaviors: bundle, fixtures, entityGraph, listings, targets });
   const siteName = siteNameFor(bundleDir, modeDir);
 
   const qcDir = path.join(modeDir, 'qc');
