@@ -37,6 +37,9 @@ import {
 import type { PageCssVars } from './extract/tokens';
 import { extractListings } from './extract/listings';
 import { buildEntityGraph } from './extract/entities';
+import { captureLayout } from './extract/layout';
+import { captureSurfaces } from './extract/surfaces';
+import { captureElementStates } from './extract/elementStates';
 import { renderRebuildPrompt } from './prompt/generate';
 import type { PromptPageInfo } from './prompt/generate';
 import type {
@@ -271,6 +274,41 @@ export async function run(
           // Save <head> assets (favicons / og-image / manifest icons) while open.
           if (cfg.extract?.enabled && cfg.extract.assets) {
             await session.collector?.collectHeadAssets(page).catch(() => {});
+          }
+
+          // Tier-3 per-page passes. Paths derive from the unique per-page absPath,
+          // so concurrent captures never collide. Read-only passes (layout/surfaces)
+          // run BEFORE element-states (which drives hover/focus/active and mutates
+          // interaction state) — and all run AFTER the clean screenshot.
+          const baseNoExt = absPath.replace(/\.png$/i, '');
+          const modeRoot = path.join(cfg.outDir, cfg.mode);
+          const relOf = (abs: string): string => path.relative(modeRoot, abs).split(path.sep).join('/');
+          if (cfg.extract?.enabled && cfg.extract.layout) {
+            const rep = await captureLayout(page, target.label, target.url).catch(() => null);
+            if (rep && rep.boxes.length > 0) {
+              await fs.writeFile(`${baseNoExt}.layout.json`, JSON.stringify(rep, null, 2), 'utf8').catch(() => {});
+            }
+          }
+          if (cfg.extract?.enabled && cfg.extract.surfaces) {
+            const absDir = `${baseNoExt}-surfaces`;
+            const rep = await captureSurfaces(page, target.label, target.url, {
+              absDir,
+              relBase: relOf(absDir),
+            }).catch(() => null);
+            if (rep && (rep.surfaces.length > 0 || (rep.webComponents && rep.webComponents.length > 0))) {
+              await fs.writeFile(`${baseNoExt}.surfaces.json`, JSON.stringify(rep, null, 2), 'utf8').catch(() => {});
+            }
+          }
+          if (cfg.extract?.enabled && cfg.extract.elementStates) {
+            const absDir = `${baseNoExt}-states`;
+            const rep = await captureElementStates(page, target.label, target.url, {
+              absDir,
+              relBase: relOf(absDir),
+              cfg: cfg.extract,
+            }).catch(() => null);
+            if (rep && rep.elements.length > 0) {
+              await fs.writeFile(`${baseNoExt}.element-states.json`, JSON.stringify(rep, null, 2), 'utf8').catch(() => {});
+            }
           }
 
           // Provoke first-party API calls AFTER capture (visuals/DOM stay clean).

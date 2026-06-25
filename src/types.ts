@@ -105,6 +105,8 @@ export interface Clickable {
   placeholder?: string;
   /** For <select>/listbox: the option labels. */
   options?: string[];
+  /** Lives inside an open shadow root (web component). */
+  inShadow?: boolean;
 }
 
 export type ActionOutcome =
@@ -347,6 +349,12 @@ export interface ExtractConfig {
   elementStates: boolean;
   /** Scrub secret-looking substrings out of saved HTML. */
   scrubHtml: boolean;
+  /** Capture exact box-model geometry for landmark elements (layout.json). */
+  layout: boolean;
+  /** Inventory dynamic surfaces (canvas/video/iframe/webgl) + thumbnails (surfaces.json). */
+  surfaces: boolean;
+  /** Pierce open Shadow DOM in DOM/token/clickable capture (web components). */
+  shadowDom: boolean;
 }
 
 /** Raw per-page design-token tallies (computed-style frequencies). */
@@ -761,6 +769,83 @@ export interface VerifyRouteResult {
   /** Weighted route score (visual + structural). */
   score: number;
   note?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TIER 3 — capture blind spots
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One interaction state of a control, with its computed-style delta vs resting. */
+export interface ElementState {
+  state: 'hover' | 'focus' | 'active' | 'disabled';
+  /** Tight clipped screenshot of the element in this state (rel to bundle). */
+  screenshot?: string;
+  /** Computed-style props that changed from resting → this state (from→to). */
+  styleDelta: Record<string, { from: string; to: string }>;
+}
+
+/** Captured interaction states for one representative control. */
+export interface ElementStateCapture {
+  selector: string;
+  label: string;
+  role: string;
+  states: ElementState[];
+}
+
+/** Per-page element-interaction-state report (hover/focus/active/disabled). */
+export interface ElementStatesReport {
+  page: string;
+  pageUrl: string;
+  elements: ElementStateCapture[];
+}
+
+/** Exact box-model geometry for one landmark element. */
+export interface LayoutBox {
+  selector: string;
+  role?: string;
+  label?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Key computed box properties (margin/padding/display/position/zIndex/flex/grid…). */
+  box: Record<string, string>;
+}
+
+/** Per-page exact-geometry capture for ~20-40 landmark elements. */
+export interface LayoutCapture {
+  page: string;
+  pageUrl: string;
+  viewport: { width: number; height: number };
+  boxes: LayoutBox[];
+}
+
+/** A dynamic visual surface (canvas/video/iframe/webgl/animated-svg). */
+export interface Surface {
+  kind: 'canvas' | 'video' | 'audio' | 'iframe' | 'svg-animated' | 'webgl';
+  selector: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  src?: string;
+  poster?: string;
+  /** Canvas 2D vs webgl context, when detectable. */
+  contextType?: string;
+  /** Detected charting library (chart.js/d3/echarts/highcharts/plotly), if any. */
+  chartLib?: string;
+  /** Rendered snapshot of the surface (canvas toDataURL / video poster), rel to bundle. */
+  thumbnail?: string;
+  crossOrigin?: boolean;
+}
+
+/** Per-page inventory of dynamic surfaces (so they aren't rebuilt as blank boxes). */
+export interface SurfacesReport {
+  page: string;
+  pageUrl: string;
+  surfaces: Surface[];
+  /** Custom-element tags present on the page (web-component inventory). */
+  webComponents?: string[];
 }
 
 /** Whole-rebuild fidelity report (visual + structural + functional). */

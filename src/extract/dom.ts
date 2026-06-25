@@ -53,11 +53,190 @@ export function scrubSecretsFromHtml(html: string): string {
  * Returns the rendered HTML of the current page. When `cfg.extract.scrubHtml` is
  * on, secret-shaped substrings are redacted before the HTML is returned/saved.
  * The optional `cfg` keeps existing one-arg callers working unchanged.
+ *
+ * When `cfg.shadowDom !== false`, OPEN shadow roots are serialized into inert
+ * declarative-shadow-DOM `<template shadowrootmode="open">` children (with the
+ * root's encapsulated CSS — both `adoptedStyleSheets` and inner `<style>` —
+ * inlined), so the dumped HTML round-trips the full web-component tree + scoped
+ * CSS. Falls back to plain `page.content()` if shadow serialization fails.
  */
 export async function captureDom(page: Page, cfg?: ExtractConfig): Promise<string> {
-  const html = await page.content();
+  let html: string;
+  if (cfg?.shadowDom !== false) {
+    html = await serializeWithShadowDom(page);
+  } else {
+    html = await page.content();
+  }
   if (cfg?.scrubHtml) return scrubSecretsFromHtml(html);
   return html;
+}
+
+/**
+ * Serialize the full document INCLUDING open shadow roots as declarative shadow
+ * DOM. Walks the tree in-page and emits, for every element with an open
+ * `.shadowRoot`, a leading `<template shadowrootmode="open">` child carrying the
+ * root's serialized markup plus its encapsulated CSS (adoptedStyleSheets +
+ * inner <style>). Bounded + defensive: caps node count, never throws, and on any
+ * failure falls back to Playwright's `page.content()`.
+ */
+async function serializeWithShadowDom(page: Page): Promise<string> {
+  try {
+    const html = await page.evaluate(() => {
+      // Hard caps so a pathological page can't blow up memory / time.
+      const MAX_NODES = 60000;
+      const MAX_SHADOW_ROOTS = 4000;
+      const MAX_ADOPTED_CSS_BYTES = 500_000;
+
+      let nodeBudget = MAX_NODES;
+      let shadowBudget = MAX_SHADOW_ROOTS;
+      let sawShadow = false;
+
+      const VOID_TAGS = new Set([
+        'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+        'link', 'meta', 'param', 'source', 'track', 'wbr',
+      ]);
+      // Raw-text elements: their text content must NOT be HTML-escaped.
+      const RAW_TEXT_TAGS = new Set(['script', 'style']);
+
+      const escapeText = (s: string): string =>
+        s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const escapeAttr = (s: string): string =>
+        s
+          .replace(/&/g, '&amp;')
+          .replace(/"/g, '&quot;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+
+      const serializeAttrs = (el: Element): string => {
+        let out = '';
+        const attrs = el.attributes;
+        for (let i = 0; i < attrs.length; i++) {
+          const a = attrs[i];
+          out += a.value === '' ? ` ${a.name}` : ` ${a.name}="${escapeAttr(a.value)}"`;
+        }
+        return out;
+      };
+
+      // Collect the encapsulated CSS of a shadow root: adoptedStyleSheets rules.
+      // (Any <style>/<link> already inside the root are serialized as normal
+      // children, so we only need to recover the constructable sheets here.)
+      const adoptedCss = (root: ShadowRoot): string => {
+        let css = '';
+        let sheets: readonly CSSStyleSheet[] = [];
+        try {
+          sheets = (root as unknown as { adoptedStyleSheets?: CSSStyleSheet[] })
+            .adoptedStyleSheets || [];
+        } catch {
+          sheets = [];
+        }
+        for (const sheet of sheets) {
+          let rules: CSSRuleList | undefined;
+          try {
+            rules = sheet.cssRules;
+          } catch {
+            continue;
+          }
+          if (!rules) continue;
+          for (let i = 0; i < rules.length; i++) {
+            try {
+              css += rules[i].cssText + '\n';
+            } catch {
+              /* ignore a single unreadable rule */
+            }
+            if (css.length > MAX_ADOPTED_CSS_BYTES) {
+              css = css.slice(0, MAX_ADOPTED_CSS_BYTES);
+              return css;
+            }
+          }
+        }
+        return css;
+      };
+
+      // Recursively serialize a node's children (a parent context tag is used
+      // only to decide raw-text vs escaped handling of text nodes).
+      const serializeChildren = (parent: Node, parentTag: string): string => {
+        let out = '';
+        const kids = parent.childNodes;
+        for (let i = 0; i < kids.length; i++) {
+          out += serializeNode(kids[i], parentTag);
+        }
+        return out;
+      };
+
+      const serializeNode = (node: Node, parentTag: string): string => {
+        if (nodeBudget-- <= 0) return '';
+        switch (node.nodeType) {
+          case 1: {
+            // Element
+            const el = node as Element;
+            const tag = el.tagName.toLowerCase();
+            let out = `<${tag}${serializeAttrs(el)}>`;
+            if (VOID_TAGS.has(tag)) return out;
+
+            // Declarative shadow DOM: emit the open shadow root FIRST so it
+            // round-trips as the element's shadow tree on re-parse.
+            let shadow: ShadowRoot | null = null;
+            try {
+              shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot || null;
+            } catch {
+              shadow = null;
+            }
+            if (shadow && shadowBudget-- > 0) {
+              sawShadow = true;
+              const delegates =
+                (shadow as unknown as { delegatesFocus?: boolean }).delegatesFocus
+                  ? ' shadowrootdelegatesfocus'
+                  : '';
+              let inner = '';
+              const css = adoptedCss(shadow);
+              if (css) {
+                // Inline constructable-stylesheet CSS as a <style> inside the
+                // declarative template so the scoped CSS travels with it.
+                inner += `<style>${css}</style>`;
+              }
+              inner += serializeChildren(shadow, tag);
+              out += `<template shadowrootmode="open"${delegates}>${inner}</template>`;
+            }
+
+            out += serializeChildren(el, tag);
+            out += `</${tag}>`;
+            return out;
+          }
+          case 3: {
+            // Text
+            const text = (node as Text).data || '';
+            return RAW_TEXT_TAGS.has(parentTag) ? text : escapeText(text);
+          }
+          case 4:
+            // CDATA — treat as raw text.
+            return (node as CharacterData).data || '';
+          case 8:
+            // Comment
+            return `<!--${(node as Comment).data || ''}-->`;
+          default:
+            return '';
+        }
+      };
+
+      try {
+        const doctype = document.doctype
+          ? `<!DOCTYPE ${document.doctype.name}>\n`
+          : '';
+        const root = document.documentElement;
+        if (!root) return null;
+        const body = doctype + serializeNode(root, '');
+        // Only use this custom serialization when it actually added shadow DOM;
+        // otherwise let the caller fall back to the battle-tested page.content().
+        return sawShadow ? body : null;
+      } catch {
+        return null;
+      }
+    });
+    if (html) return html;
+  } catch {
+    /* fall through to page.content() */
+  }
+  return page.content();
 }
 
 /** Raw + rendered README/markdown extracted from a detail page. */

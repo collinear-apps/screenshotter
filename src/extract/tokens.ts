@@ -70,8 +70,41 @@ export async function extractTokens(page: Page): Promise<PageTokens> {
         tally[value] = (tally[value] ?? 0) + 1;
       };
 
-      const all = document.querySelectorAll('*');
-      const limit = Math.min(all.length, maxElements);
+      // Collect every element, descending into OPEN shadow roots (web
+      // components) so encapsulated tokens are tallied too. Bounded by
+      // maxElements. Inlined here (no cross-module import) and defensive.
+      const all: Element[] = [];
+      const collect = (root: ParentNode): void => {
+        let kids: HTMLCollection;
+        try {
+          kids = root.children;
+        } catch {
+          return;
+        }
+        for (let k = 0; k < kids.length; k++) {
+          if (all.length >= maxElements) return;
+          const el = kids[k];
+          all.push(el);
+          let shadow: ShadowRoot | null = null;
+          try {
+            shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot || null;
+          } catch {
+            shadow = null;
+          }
+          if (shadow) collect(shadow);
+          collect(el);
+        }
+      };
+      try {
+        const docEl = document.documentElement;
+        if (docEl) {
+          all.push(docEl); // include <html>, matching querySelectorAll('*')
+          collect(docEl);
+        }
+      } catch {
+        /* leave `all` as whatever was collected */
+      }
+      const limit = all.length;
 
       for (let i = 0; i < limit; i++) {
         const el = all[i] as Element;
@@ -224,6 +257,84 @@ export async function extractCssVars(page: Page): Promise<PageCssVars> {
             add(prop, rootStyle.getPropertyValue(prop), ':root');
           }
         }
+      } catch {
+        /* ignore */
+      }
+
+      // 3. Shadow DOM (web components): harvest --* declarations from each open
+      //    shadow root's adoptedStyleSheets AND its inner <style> rules, so
+      //    encapsulated theme variables are counted. Bounded element walk; never
+      //    throws. Scope is tagged "shadow:<host-tag>" for provenance.
+      const MAX_SHADOW_HOSTS = 2000;
+      let hostBudget = MAX_SHADOW_HOSTS;
+      const addFromRules = (rules: CSSRuleList | undefined, scope: string): void => {
+        if (!rules) return;
+        for (let i = 0; i < rules.length && out.length < cap; i++) {
+          const rule = rules[i] as CSSStyleRule;
+          const style = rule.style;
+          if (!style || typeof style.length !== 'number') continue;
+          for (let j = 0; j < style.length; j++) {
+            const prop = style[j];
+            if (prop && prop.startsWith('--')) {
+              add(prop, style.getPropertyValue(prop), scope);
+            }
+          }
+        }
+      };
+      const walkShadow = (rootNode: ParentNode): void => {
+        if (out.length >= cap) return;
+        let kids: HTMLCollection;
+        try {
+          kids = rootNode.children;
+        } catch {
+          return;
+        }
+        for (let k = 0; k < kids.length && out.length < cap; k++) {
+          const el = kids[k];
+          let shadow: ShadowRoot | null = null;
+          try {
+            shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot || null;
+          } catch {
+            shadow = null;
+          }
+          if (shadow && hostBudget-- > 0) {
+            const scope = `shadow:${el.tagName.toLowerCase()}`;
+            // 3a. adoptedStyleSheets (constructable stylesheets).
+            let sheets: readonly CSSStyleSheet[] = [];
+            try {
+              sheets = (shadow as unknown as { adoptedStyleSheets?: CSSStyleSheet[] })
+                .adoptedStyleSheets || [];
+            } catch {
+              sheets = [];
+            }
+            for (const sheet of sheets) {
+              try {
+                addFromRules(sheet.cssRules, scope);
+              } catch {
+                /* ignore cross-origin / unreadable sheet */
+              }
+            }
+            // 3b. <style> elements rendered inside the shadow root.
+            let styleEls: NodeListOf<HTMLStyleElement>;
+            try {
+              styleEls = shadow.querySelectorAll('style');
+            } catch {
+              styleEls = [] as unknown as NodeListOf<HTMLStyleElement>;
+            }
+            styleEls.forEach((styleEl) => {
+              try {
+                addFromRules(styleEl.sheet?.cssRules, scope);
+              } catch {
+                /* ignore */
+              }
+            });
+            walkShadow(shadow);
+          }
+          walkShadow(el);
+        }
+      };
+      try {
+        if (document.documentElement) walkShadow(document.documentElement);
       } catch {
         /* ignore */
       }

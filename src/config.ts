@@ -308,6 +308,9 @@ function buildExtractConfig(input: BuildConfigInput): ExtractConfig | undefined 
     cssVars: true,
     elementStates: true,
     scrubHtml: true,
+    layout: true,
+    surfaces: true,
+    shadowDom: true,
   };
 }
 

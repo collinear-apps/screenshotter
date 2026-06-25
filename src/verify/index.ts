@@ -116,10 +116,14 @@ export async function runVerify(
 
   const results: VerifyRouteResult[] = [];
   try {
-    for (const r of routes) {
+    for (let i = 0; i < routes.length; i++) {
+      const r = routes[i];
       const goldenShot = r.screenshots && r.screenshots[0] ? path.join(modeDir, r.screenshots[0]) : undefined;
       const rebuildUrl = routeUrlFor(r.url, targetUrl);
-      const slug = sanitizeSegment(r.label || r.route || 'route');
+      // Index-prefix the filename so distinct routes that slugify the same (e.g.
+      // "Settings" vs "settings", or duplicate labels) can't overwrite each other's
+      // actual/diff PNGs and mis-associate the report.
+      const slug = `${String(i).padStart(3, '0')}-${sanitizeSegment(r.label || r.route || 'route')}`;
       const actualShot = path.join(verifyDir, 'actual', `${slug}.png`);
 
       let pixelScore: number | undefined;

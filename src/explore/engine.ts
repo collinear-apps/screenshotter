@@ -366,6 +366,72 @@ export async function explorePage(
     }
   };
 
+  // Fast probe for a transient loading/skeleton frame, used to catch the moment
+  // BEFORE networkidle settles (the normal settle() would let it vanish). Polls a
+  // few times over a short window; returns true the first time a loading marker is
+  // visible. Never throws.
+  const probeLoading = async (): Promise<boolean> => {
+    try {
+      return await page.evaluate(() => {
+        const vis = (el: Element): boolean => {
+          const r = (el as HTMLElement).getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        };
+        const sel =
+          '[aria-busy="true"], [role=progressbar], .spinner, .loading, [class*="skeleton" i], [class*="loading" i], [class*="spinner" i]';
+        for (const el of Array.from(document.querySelectorAll(sel))) {
+          if (vis(el)) return true;
+        }
+        return false;
+      });
+    } catch {
+      return false;
+    }
+  };
+
+  // Capture transient (loading/skeleton) artifacts that exist only BETWEEN the
+  // actuation and networkidle. Call this concurrently WITH settle(). It races a
+  // short poll loop and, the first time a loading marker shows, grabs a (viewport,
+  // fast) screenshot into `<base>.loading.png`. `stop()` lets the caller end the
+  // poll the moment settle() finishes with no loading seen, so a non-loading
+  // action doesn't waste up to the full window per action (budget-friendly).
+  // Returns the relative screenshot path when one was captured. Never throws.
+  const captureLoadingFrame = async (
+    base: string,
+    stop: () => boolean,
+  ): Promise<string | undefined> => {
+    const LOADING_WINDOW_MS = 1200;
+    const POLL_MS = 80;
+    const deadline = Date.now() + LOADING_WINDOW_MS;
+    try {
+      while (Date.now() < deadline) {
+        if (await probeLoading()) {
+          await ensureDir();
+          const name = base + '.loading.png';
+          // Viewport-only + animations disabled: a loading frame is ephemeral, so
+          // a fast clip beats a full-page shot (which could outlive the state).
+          await page
+            .screenshot({
+              path: abs(name),
+              fullPage: false,
+              type: 'png',
+              animations: 'disabled',
+              timeout: 4000,
+            })
+            .catch(() => {});
+          return rel(name);
+        }
+        // Settle finished and we never saw a spinner — no loading frame exists for
+        // this action, so stop polling instead of burning the rest of the window.
+        if (stop()) break;
+        await page.waitForTimeout(POLL_MS);
+      }
+    } catch {
+      // best-effort — a missed loading frame never fails the action.
+    }
+    return undefined;
+  };
+
   // Bounded infinite-scroll / "load more" detection. Records the item count
   // before/after a capped scroll-and-wait; returns 'grew' when more content
   // appeared (a real load-more feature), else 'static'. Never throws.
@@ -518,6 +584,26 @@ export async function explorePage(
       const selectable = isSelectable(c);
       let value: string | undefined;
 
+      // Stem for this action's artifacts — computed BEFORE actuation so the
+      // transient (loading/skeleton) frame, which exists only between actuation
+      // and networkidle, can be captured as `<base>.loading.png`.
+      const base = `${String(counter).padStart(3, '0')}-${slug(c.label)}`;
+      // Run the loading-frame poll CONCURRENTLY with settle(): settle waits for
+      // networkidle (during which the spinner is up), while captureLoadingFrame
+      // races a short poll and screenshots the first loading marker it sees.
+      let loadingShot: string | undefined;
+      const settleWithTransient = async (): Promise<void> => {
+        let settled = false;
+        const settleThenMark = settle().then(() => {
+          settled = true;
+        });
+        const [shot] = await Promise.all([
+          captureLoadingFrame(base, () => settled),
+          settleThenMark,
+        ]);
+        if (shot) loadingShot = shot;
+      };
+
       let outcome: ActionOutcome = 'noop';
       try {
         const loc = page.locator(c.selector).first();
@@ -531,7 +617,7 @@ export async function explorePage(
           // aggressive submits anything not hard-denied (the label already
           // passed `decide`). Press Enter to mimic a real user submit.
           await loc.press('Enter', { timeout: e.perActionTimeoutMs }).catch(() => {});
-          await settle();
+          await settleWithTransient();
         } else if (selectable) {
           // Actuate the <select>/listbox: pick a non-placeholder option
           // (the 2nd option when present, since the 1st is often a placeholder).
@@ -549,10 +635,10 @@ export async function explorePage(
               .click({ timeout: e.perActionTimeoutMs })
               .catch(() => {});
           }
-          await settle();
+          await settleWithTransient();
         } else {
           await loc.click({ timeout: e.perActionTimeoutMs });
-          await settle();
+          await settleWithTransient();
         }
       } catch {
         outcome = 'error';
@@ -592,9 +678,13 @@ export async function explorePage(
 
       let screenshot: string | undefined;
       let dom: string | undefined;
+      // Empty/error frames are first-class artifacts even when the coarse outcome
+      // is a no-op (e.g. a no-match search that only swaps in a "no results" panel
+      // the state signature treats as unchanged) — capture them so the rebuild
+      // reproduces the empty/error UX, not just the happy path.
+      let transientShot: string | undefined;
 
       if (outcome === 'navigation' || outcome === 'modal' || outcome === 'dom-change') {
-        const base = `${String(counter).padStart(3, '0')}-${slug(c.label)}`;
         try {
           await ensureDir();
           await captureScreenshot(
@@ -627,6 +717,26 @@ export async function explorePage(
         }
       }
 
+      // First-class empty/error frame: when the settled state is an empty-results
+      // or error state, screenshot it explicitly (named by state) so it survives
+      // even when the main `screenshot` above wasn't taken (e.g. a no-op outcome
+      // whose only change was swapping in a "no results"/error panel). The full
+      // `screenshot` (when present) already shows the same DOM, so skip the extra
+      // shot if we already captured one for this action.
+      if (
+        (transientState === 'empty' || transientState === 'error') &&
+        !screenshot
+      ) {
+        try {
+          await ensureDir();
+          const name = `${base}.${transientState}.png`;
+          await captureScreenshot(page, abs(name), cfg.determinism?.maskSelectors ?? []);
+          transientShot = rel(name);
+        } catch {
+          // best-effort
+        }
+      }
+
       actions.push({
         id,
         pageLabel: target.label,
@@ -638,7 +748,10 @@ export async function explorePage(
         toUrl,
         downloadFile,
         network: e.captureNetwork ? dedupe(net).slice(0, 50) : undefined,
-        screenshot,
+        // Prefer the result-state shot; else the explicit empty/error frame; else
+        // the transient loading frame — so every recorded transient state carries
+        // a screenshot path the rebuild/QC layers can reference.
+        screenshot: screenshot ?? transientShot ?? loadingShot,
         dom,
         path: statePath,
         value,
@@ -649,6 +762,66 @@ export async function explorePage(
       env.budget.remaining--;
       perPage++;
       env.onProgress?.();
+
+      // INDUCE an empty state (aggressive only): for a search/free-text field that
+      // didn't navigate away, re-type a guaranteed no-match query so the page's
+      // "no results"/empty branch renders, then capture it as its OWN action. This
+      // is cheap (one extra fill on a field we're already focused on) and yields a
+      // first-class empty-state artifact the rebuild must reproduce. Budget-aware.
+      const isSearchField =
+        fillable && (c.kind === 'searchbox' || (c.inputType || '') === 'search' || /search|filter|find|query/i.test(c.label));
+      if (
+        e.aggressive &&
+        isSearchField &&
+        outcome !== 'navigation' &&
+        outcome !== 'error' &&
+        budgetOk()
+      ) {
+        try {
+          const loc = page.locator(c.selector).first();
+          if (await loc.isVisible({ timeout: 500 }).catch(() => false)) {
+            const NO_MATCH = 'zzqxnomatch9173';
+            await loc.fill(NO_MATCH, { timeout: e.perActionTimeoutMs });
+            await loc.press('Enter', { timeout: e.perActionTimeoutMs }).catch(() => {});
+            await settle();
+            const emptyState = await sampleTransientState();
+            // Only record when the page actually showed an empty/error branch —
+            // otherwise the no-match query taught us nothing worth an artifact.
+            if (emptyState === 'empty' || emptyState === 'error') {
+              counter++;
+              const eid = `${pageSlug}-${String(counter).padStart(3, '0')}`;
+              const ebase = `${String(counter).padStart(3, '0')}-${slug(c.label)}-empty`;
+              let eshot: string | undefined;
+              try {
+                await ensureDir();
+                await captureScreenshot(page, abs(ebase + '.png'), cfg.determinism?.maskSelectors ?? []);
+                eshot = rel(ebase + '.png');
+              } catch {
+                // best-effort
+              }
+              actions.push({
+                id: eid,
+                pageLabel: target.label,
+                depth,
+                label: c.label,
+                kind: c.kind,
+                selector: c.selector,
+                outcome: 'dom-change',
+                note: `induced empty state via no-match query "${NO_MATCH}"`,
+                screenshot: eshot,
+                path: statePath,
+                value: NO_MATCH,
+                transientState: emptyState,
+              });
+              env.budget.remaining--;
+              perPage++;
+              env.onProgress?.();
+            }
+          }
+        } catch {
+          // best-effort: empty-state induction never fails the page.
+        }
+      }
 
       // Recurse into genuinely new states only.
       if (
