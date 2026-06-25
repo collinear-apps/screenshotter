@@ -25,8 +25,28 @@ export interface BrowserSession {
  * a realistic UA + clearing `navigator.webdriver` makes capture/login work. This
  * is presentation, not evasion — use it on sites/accounts you're authorized for.
  */
-export const DESKTOP_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+/**
+ * Build a desktop-Chrome UA for a given Chromium version — WITHOUT the "Headless"
+ * token and matching the REAL engine version. A stale/mismatched version triggers
+ * "your browser is not compatible / upgrade your browser" blocks (e.g. Notion);
+ * the launch path derives this from `browser.version()` so it never goes stale as
+ * Playwright bumps its bundled Chromium. OS is derived from the host.
+ */
+export function chromeUserAgent(version: string): string {
+  const os =
+    process.platform === 'win32'
+      ? 'Windows NT 10.0; Win64; x64'
+      : process.platform === 'linux'
+        ? 'X11; Linux x86_64'
+        : 'Macintosh; Intel Mac OS X 10_15_7';
+  return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${version} Safari/537.36`;
+}
+
+/**
+ * Fallback desktop UA, used ONLY if the live engine version is unavailable. The
+ * real capture/login paths override this with chromeUserAgent(browser.version()).
+ */
+export const DESKTOP_UA = chromeUserAgent('149.0.0.0');
 export const ANTIBOT_ARGS = ['--disable-blink-features=AutomationControlled'];
 const ACCEPT_LANGUAGE = 'en-US,en;q=0.9';
 
@@ -67,6 +87,7 @@ export function buildContextOptions(
   breakpoint: Breakpoint,
   colorScheme: ColorScheme,
   cfg: RunConfig,
+  userAgent?: string,
 ): BrowserContextOptions {
   // 1. Viewport / device base.
   let opts: BrowserContextOptions;
@@ -78,7 +99,8 @@ export function buildContextOptions(
     opts = {
       viewport: { width: breakpoint.width, height: breakpoint.height },
       deviceScaleFactor: breakpoint.deviceScaleFactor,
-      userAgent: DESKTOP_UA,
+      // Prefer the live-engine-derived UA (drift-proof); fall back to DESKTOP_UA.
+      userAgent: userAgent ?? DESKTOP_UA,
     };
     // Non-device mobile/tablet profiles still need mobile emulation flags so
     // responsive media queries and touch layouts resolve.
@@ -149,7 +171,9 @@ export async function launchSessionForVariant(
 ): Promise<BrowserSession> {
   const browser = await chromium.launch({ headless: true, args: ANTIBOT_ARGS });
 
-  const opts = buildContextOptions(breakpoint, colorScheme, cfg);
+  // Derive the UA from the REAL Chromium version so version-gated sites (Notion's
+  // "browser not compatible") don't reject us on a stale hardcoded version.
+  const opts = buildContextOptions(breakpoint, colorScheme, cfg, chromeUserAgent(browser.version()));
 
   const context = await browser.newContext(opts);
 

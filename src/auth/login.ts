@@ -8,7 +8,7 @@ import { mkdir } from 'fs/promises';
 import * as path from 'path';
 import * as readline from 'readline';
 import type { Mode } from '../types';
-import { ANTIBOT_ARGS, DESKTOP_UA } from '../capture/browser';
+import { ANTIBOT_ARGS, chromeUserAgent } from '../capture/browser';
 
 /**
  * Launch a headed browser at `url`, let a human authenticate interactively, and
@@ -39,7 +39,9 @@ export async function captureLogin(
         ? await browser.newContext({ ...devices['iPhone 13'] })
         : await browser.newContext({
             viewport: { width: 1440, height: 900 },
-            userAgent: DESKTOP_UA,
+            // Derived from the real engine version so version-gated sites (Notion's
+            // "browser not compatible") accept the login window too.
+            userAgent: chromeUserAgent(browser.version()),
             extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
           });
 
