@@ -75,6 +75,9 @@ a11y-diff: build ## Grade UI state  (vars: EXPECTED, ACTUAL, THRESHOLD)
 qc: build ## Generate functional QC tasks; pass TARGET=<url> to run them  (vars: BUNDLE, TARGET)
 	$(NODE) dist/index.js qc-tasks $(BUNDLE) $(if $(TARGET),--run --target $(TARGET))
 
+verify: build ## Score a rebuild vs a captured bundle: pixel+a11y+functional  (vars: BUNDLE, TARGET, THRESHOLD)
+	$(NODE) dist/index.js verify $(BUNDLE) $(TARGET) --threshold $(THRESHOLD)
+
 mock: ## Run the generated mock API for a bundle  (var: BUNDLE)
 	node $(BUNDLE)/web/api/mock/server.mjs
 

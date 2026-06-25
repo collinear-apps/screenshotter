@@ -169,6 +169,9 @@ server.registerTool(
       outDir: z.string(),
       captured: z.number(),
       failed: z.number(),
+      screenshots: z.number().optional().describe('Total screenshots written (pages + variants + states).'),
+      bundleIndexPath: z.string().optional().describe('Path to bundle.json (the rebuild spine).'),
+      manifestPath: z.string().optional().describe('Path to run-manifest.json.'),
     },
   },
   async (args) => {
@@ -209,6 +212,9 @@ server.registerTool(
         outDir: result.outDir,
         captured: result.captured,
         failed: result.failed,
+        screenshots: result.screenshots,
+        bundleIndexPath: result.bundleIndexPath,
+        manifestPath: result.manifestPath,
       };
 
       return {
@@ -217,7 +223,9 @@ server.registerTool(
             type: 'text' as const,
             text:
               `Captured ${result.captured} page(s), ${result.failed} failed.\n` +
+              `Screenshots: ${result.screenshots ?? 0}\n` +
               `Zip: ${result.zipPath ?? 'n/a'}\n` +
+              `Bundle index: ${result.bundleIndexPath ?? 'n/a'}\n` +
               `Output dir: ${result.outDir}`,
           },
         ],

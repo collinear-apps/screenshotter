@@ -743,3 +743,38 @@ export interface ComponentEntry {
   routes: string[];
   note?: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VERIFY GATE — closed-loop fidelity scoring of a rebuild vs. the captured bundle
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Per-route fidelity result: visual (pixel) + structural (a11y) sub-scores. */
+export interface VerifyRouteResult {
+  route: string;
+  url: string;
+  /** 0..1 — 1 minus the share of differing pixels (top-left common region). */
+  pixelScore?: number;
+  /** Path (rel to bundle) of the written diff PNG, when produced. */
+  diffPath?: string;
+  /** 0..1 — accessibility-tree Dice similarity vs the captured golden. */
+  a11yScore?: number;
+  /** Weighted route score (visual + structural). */
+  score: number;
+  note?: string;
+}
+
+/** Whole-rebuild fidelity report (visual + structural + functional). */
+export interface VerifyReport {
+  target: string;
+  bundle: string;
+  /** Weighted overall fidelity score 0..1. */
+  score: number;
+  threshold: number;
+  pass: boolean;
+  visual: { avg: number; routes: number };
+  structural: { avg: number; routes: number };
+  functional: { passed: number; total: number; rate: number };
+  routes: VerifyRouteResult[];
+  /** Lowest-scoring routes first (where to focus fixes). */
+  worst: VerifyRouteResult[];
+}

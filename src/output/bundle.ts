@@ -1,7 +1,7 @@
 // PHASE 4 — runnable handoff. OWNED by Lane 4.
 // Writes bundle.json: the machine-readable spine linking every route to its
 // screenshot(s)/DOM/a11y golden/fixtures/behaviors, plus index.md for humans.
-import { promises as fs } from 'fs';
+import { promises as fs, readdirSync } from 'fs';
 import path from 'path';
 import type {
   BehaviorBundle,
@@ -10,6 +10,26 @@ import type {
   BundleRouteArtifacts,
   CaptureResult,
 } from '../types';
+
+/**
+ * Collect a primary screenshot plus its on-disk breakpoint/dark variant siblings
+ * (`<base>@tablet.png`, `<base>@desktop-dark.png`, …), so the bundle exposes the
+ * full responsive/dark set the pipeline already wrote (otherwise they're orphaned).
+ * `absShot` is the primary PNG's absolute path; returns rel paths via `rel()`.
+ */
+function screenshotVariants(absShot: string, rel: (abs: string) => string): string[] {
+  const dir = path.dirname(absShot);
+  const baseNoExt = path.basename(absShot).replace(/\.png$/i, '');
+  const out = [rel(absShot)];
+  try {
+    for (const f of readdirSync(dir)) {
+      if (f.startsWith(`${baseNoExt}@`) && /\.png$/i.test(f)) out.push(rel(path.join(dir, f)));
+    }
+  } catch {
+    /* dir unreadable — primary only */
+  }
+  return out;
+}
 
 /** Inputs the pipeline already has on hand, assembled into per-route artifacts. */
 export interface BundleAssemblyInput {
@@ -68,7 +88,7 @@ export function assembleRouteArtifacts(
       label: r.target.label,
       category: r.target.category,
       url: r.target.url,
-      screenshots: [shot],
+      screenshots: screenshotVariants(r.screenshotPath, rel),
       fixtures: [],
       behaviors: [],
     };

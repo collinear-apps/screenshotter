@@ -65,6 +65,7 @@ captures a site; the others support gated sites, grading rebuilds, and appending
 | `screenshotter add <urls...> [--into <dir>] [--auth <f>]` | Capture one or more URLs and **append** them to an existing bundle (no full re-crawl) |
 | `screenshotter a11y-diff <expected> <actual> [--threshold]` | **Grade a rebuild's UI state** by comparing accessibility trees (golden vs. live URL) |
 | `screenshotter qc-tasks <bundle> [--run --target <url>]` | Generate **functional QC tasks** from a bundle; with `--run`, execute them against a rebuild and exit non-zero on failure |
+| `screenshotter verify <bundle> <target> [--threshold]` | **Fidelity gate** — re-captures the rebuild and scores it vs the bundle: pixel diff + a11y diff + functional QC → one score; exit 1 if any route is below threshold |
 
 ### Capability flags (compose freely on the capture command)
 
@@ -108,7 +109,23 @@ screenshotter qc-tasks output/example --run --target http://localhost:3000   # d
 
 # 7. Grade a rebuilt UI state against an accessibility golden
 screenshotter a11y-diff output/example/web/home.aria.yaml http://localhost:3000 --threshold 0.9
+
+# 8. Closed-loop fidelity gate — re-capture the rebuild and score it vs the bundle
+#    (pixel diff + a11y diff + functional QC → one score; writes verify-report.json)
+screenshotter verify output/example http://localhost:3000 --threshold 0.9
 ```
+
+### The fidelity gate (`verify`)
+
+`verify <bundle> <target>` is the closed verification loop: it re-captures every route
+of your rebuild with the same deterministic context, then scores it three ways —
+**visual** (perceptual pixel diff vs the captured screenshot), **structural**
+(accessibility-tree similarity vs the `.aria.yaml` golden), and **functional** (the
+generated QC tasks). It writes `verify-report.json` + per-route diff PNGs under
+`verify/`, prints a ranked scorecard, and **exits 1 if any route is below
+`--threshold`** — so a coding agent can loop "rebuild → verify → fix the worst routes"
+until it passes. (Pixel diff compares the shared top-left region; it's strongest on
+content-dense pages, with the a11y score covering structural changes pixels can miss.)
 
 ### Via `make` (convenience task runner)
 

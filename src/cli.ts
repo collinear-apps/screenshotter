@@ -10,6 +10,7 @@ import { siteNameFromUrl } from './output/naming';
 import { captureLogin } from './auth/login';
 import { runA11yDiff } from './a11y/command';
 import { runQc } from './qc/command';
+import { runVerifyCommand } from './verify/command';
 import { runAdd } from './add/command';
 import * as pipeline from './pipeline';
 
@@ -179,6 +180,37 @@ export async function main(argv: string[]): Promise<void> {
           target: opts.target,
           threshold: Number.isFinite(t) ? t : 0.9,
           mode,
+          json: Boolean(opts.json),
+        });
+        process.exit(code);
+      },
+    );
+
+  // ── `verify` subcommand: score a rebuild against the captured bundle ──
+  program
+    .command('verify <bundle> <target>')
+    .description(
+      'Score a rebuilt app against a captured bundle: pixel diff + a11y diff + ' +
+        'functional QC → one fidelity score. Exit 1 when below --threshold.',
+    )
+    .option('--threshold <n>', 'minimum fidelity score to pass (0..1)', '0.9')
+    .option('-m, --mode <mode>', 'web | mobile (must match the capture mode)', 'web')
+    .option('--mask <selectors>', 'comma-separated CSS selectors to ignore in the pixel diff')
+    .option('--max-routes <n>', 'cap routes verified (re-capture is the slow part)')
+    .option('--json', 'machine-readable output')
+    .action(
+      async (
+        bundle: string,
+        target: string,
+        opts: { threshold?: string; mode?: string; mask?: string; maxRoutes?: string; json?: boolean },
+      ) => {
+        const mode = asMode(opts.mode, 'web')!;
+        const t = Number(opts.threshold);
+        const code = await runVerifyCommand(bundle, normalizeBaseUrl(target), {
+          threshold: Number.isFinite(t) ? t : 0.9,
+          mode,
+          mask: opts.mask,
+          maxRoutes: opts.maxRoutes ? Number(opts.maxRoutes) : undefined,
           json: Boolean(opts.json),
         });
         process.exit(code);

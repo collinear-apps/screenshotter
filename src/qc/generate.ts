@@ -400,14 +400,90 @@ export function buildAllQcTasks(input: QcBuildInput): QcTask[] {
   // 1. Behavior + route tasks (existing logic), with fill/select values attached.
   let tasks = withFillSelectValues(buildQcTasks(behaviors), features);
 
-  // 2. Data-fidelity tasks (captured values must render).
-  const dataTasks = buildDataTasks(input.fixtures ?? [], tasks.length);
-  tasks = tasks.concat(dataTasks);
+  // 2. Data-fidelity tasks (captured values must render) — from API fixtures, AND
+  //    from the entity graph + listing rows (SSR/server-rendered sites expose little
+  //    XHR, so without these they'd get near-zero data assertions).
+  tasks = tasks.concat(buildDataTasks(input.fixtures ?? [], tasks.length));
+  tasks = tasks.concat(buildEntityDataTasks(input.entityGraph, tasks.length));
+  tasks = tasks.concat(buildListingDataTasks(input.listings ?? [], tasks.length));
 
   // 3. Coverage tasks (every route renders; listings meet captured row count).
   const coverage = buildCoverageTasks(input.targets ?? [], input.listings ?? [], tasks.length);
   tasks = tasks.concat(coverage);
 
+  return tasks;
+}
+
+/** Cap on entity / listing data-fidelity tasks so a large crawl doesn't explode. */
+const MAX_ENTITY_TASKS = 30;
+const MAX_LISTING_TASKS = 20;
+
+/**
+ * Data-fidelity tasks from the entity graph: for entities that carry a URL + rich
+ * fields, assert their captured field values render on that route. Critical for
+ * SSR/server-rendered sites where the data arrives in HTML, not XHR.
+ */
+export function buildEntityDataTasks(graph: EntityGraph | undefined, startIndex = 0): QcTask[] {
+  const entities = graph && Array.isArray(graph.entities) ? graph.entities : [];
+  const candidates = entities.filter(
+    (e) => e && e.url && e.fields && Object.keys(e.fields).length > 0,
+  );
+  const tasks: QcTask[] = [];
+  let n = startIndex;
+  for (const e of candidates.slice(0, MAX_ENTITY_TASKS)) {
+    const pairs = salientPairs(e.fields as Record<string, unknown>);
+    if (pairs.length === 0) continue;
+    const route = pathnameOnly(e.url);
+    const data: DataAssertion[] = pairs.map((p) => ({
+      expectText: p.value,
+      source: `entity:${e.type}/${e.id}#${p.key}`,
+    }));
+    n += 1;
+    tasks.push({
+      id: `QC-${String(n).padStart(3, '0')}`,
+      title: `data: ${e.type} "${e.id}" renders on ${route}`,
+      page: route,
+      pageUrl: e.url as string,
+      semantic: { name: pairs[0].value },
+      action: 'none',
+      steps: [`Open ${route}`, `Expect captured ${e.type} values: ${pairs.map((p) => `"${p.value}"`).join(', ')}`],
+      expect: { kind: 'noop', detail: `captured ${e.type} fields render (not placeholders)`, data },
+    });
+  }
+  return tasks;
+}
+
+/**
+ * Data-fidelity tasks from listing extracts: assert that the captured row values
+ * (e.g. card titles) actually render on the listing page — not 1 placeholder row.
+ */
+export function buildListingDataTasks(listings: ListingExtract[] | undefined, startIndex = 0): QcTask[] {
+  const list = Array.isArray(listings) ? listings : [];
+  const tasks: QcTask[] = [];
+  let n = startIndex;
+  for (const lx of list.slice(0, MAX_LISTING_TASKS)) {
+    if (!lx || !Array.isArray(lx.rows) || lx.rows.length === 0) continue;
+    const vals: string[] = [];
+    for (const row of lx.rows.slice(0, 8)) {
+      const pairs = salientPairs((row.fields || {}) as Record<string, unknown>);
+      if (pairs[0]) vals.push(pairs[0].value); // the row's primary value (title/link)
+    }
+    const uniq = [...new Set(vals)].slice(0, MAX_DATA_ASSERTIONS);
+    if (uniq.length === 0) continue;
+    const route = pathnameOnly(lx.pageUrl) || lx.page;
+    const data: DataAssertion[] = uniq.map((v, i) => ({ expectText: v, source: `listing:${lx.page}#row${i}` }));
+    n += 1;
+    tasks.push({
+      id: `QC-${String(n).padStart(3, '0')}`,
+      title: `data: listing rows render on ${route}`,
+      page: route,
+      pageUrl: lx.pageUrl || route,
+      semantic: { name: uniq[0] },
+      action: 'none',
+      steps: [`Open ${route}`, `Expect listed items to render: ${uniq.map((v) => `"${v}"`).join(', ')}`],
+      expect: { kind: 'noop', detail: `${uniq.length} captured listing rows render`, data },
+    });
+  }
   return tasks;
 }
 
