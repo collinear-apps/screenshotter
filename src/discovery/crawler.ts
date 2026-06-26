@@ -5,7 +5,25 @@ import type { BrowserContext, Page } from 'playwright';
 import type { RunConfig, PageTarget } from '../types';
 
 /** File extensions we never want to enqueue/screenshot. */
-const ASSET_EXT = /\.(png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|zip|gz|tar|pdf|mp4|webm|mp3|wav|woff2?|ttf|eot|map|txt|rss|atom)$/i;
+export const ASSET_EXT = /\.(png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|zip|gz|tar|pdf|mp4|webm|mp3|wav|woff2?|ttf|eot|map|txt|rss|atom)$/i;
+
+/**
+ * Tracking / view-source query params that don't change the page — stripping them
+ * for dedup stops the SAME page from being captured N times (e.g. Notion's
+ * `?pvs=28` / `?pvs=11`, or `utm_*` campaign tags) and wasting the page budget.
+ */
+const TRACKING_PARAMS = new Set([
+  'pvs', 'ref', 'ref_', 'referrer', 'source', 'gclid', 'fbclid', 'msclkid',
+  'yclid', 'mc_cid', 'mc_eid', 'igshid', '_ga', '_gl', '_hsenc', '_hsmi', 'spm',
+]);
+
+/** Remove tracking params (utm_* + the known set) from a query in place. */
+function stripTrackingParams(params: URLSearchParams): void {
+  for (const k of [...params.keys()]) {
+    const lk = k.toLowerCase();
+    if (lk.startsWith('utm_') || TRACKING_PARAMS.has(lk)) params.delete(k);
+  }
+}
 
 /**
  * Normalize a URL for dedup purposes: strip trailing slash and collapse default
@@ -17,7 +35,7 @@ const ASSET_EXT = /\.(png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|zip|gz|tar|
  * `/app#/users` and `/app#/settings` don't collapse to one page. Only the
  * router-style `#/…` / `#!/…` forms are kept; in-page anchors are still stripped.
  */
-function normalize(raw: string): string | null {
+export function normalize(raw: string): string | null {
   try {
     const u = new URL(raw);
     // Preserve hash-router fragments (#/route, #!/route); strip plain anchors.
@@ -25,6 +43,10 @@ function normalize(raw: string): string | null {
     if (!isRoute) u.hash = '';
     // Collapse default index documents to their containing directory.
     u.pathname = u.pathname.replace(/\/index\.(?:html?|php|aspx?)$/i, '/');
+    // Drop tracking/view-source params and sort the rest so query-only variants
+    // of the same page (?pvs=28 vs ?pvs=11 vs none) collapse to one.
+    stripTrackingParams(u.searchParams);
+    u.searchParams.sort();
     let s = u.toString();
     if (isRoute) {
       // Strip a trailing slash on the PATH portion only, leaving the fragment.

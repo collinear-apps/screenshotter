@@ -70,11 +70,12 @@ import { sanitizeSegment } from './output/naming';
 import { performFormLogin } from './auth/formLogin';
 import { harTempPath, processApiArtifacts } from './api';
 import { discoverPages } from './discovery';
+import { normalize as normalizeUrl, ASSET_EXT } from './discovery/crawler';
 import { extractTypography } from './typography/extract';
 import { aggregateTypography } from './typography/aggregate';
 import { renderTypographyMarkdown } from './typography/report';
 import { ensureCleanOutDir, writeTypographyFile, createZip } from './output/zip';
-import { screenshotRelPath } from './output/naming';
+import { screenshotRelPath, slugForUrl } from './output/naming';
 import { pLimit } from './util/limit';
 import { createProgress, fmtDuration, bar } from './util/progress';
 
@@ -473,6 +474,54 @@ export async function run(
             ? pc.green(`  explored ${pagesDone}/${nPages} page(s) · ${totalActions} actions`)
             : undefined,
         );
+
+        // 4d. Capture pages discovered via EXPLORATION — SPA / clickable-div
+        //     navigations the anchor-based crawler can't reach (e.g. Notion's
+        //     sidebar tree). Every explorer click that changed the URL was recorded
+        //     as a 'navigation'; promote those same-origin destinations to real
+        //     captured pages (full screenshot + extract), deduped + budget-capped.
+        let exploreOrigin = '';
+        try {
+          exploreOrigin = new URL(cfg.url).hostname;
+        } catch {
+          /* keep empty */
+        }
+        const have = new Set<string>();
+        for (const p of planned) {
+          const n = normalizeUrl(p.target.url);
+          if (n) have.add(n);
+        }
+        const discovered: PageTarget[] = [];
+        const seenDisc = new Set<string>();
+        for (const er of exploreResults) {
+          for (const a of er.actions) {
+            if (a.outcome !== 'navigation' || !a.toUrl) continue;
+            let u: URL;
+            try {
+              u = new URL(a.toUrl);
+            } catch {
+              continue;
+            }
+            if (u.hostname !== exploreOrigin) continue;
+            if (ASSET_EXT.test(u.pathname)) continue;
+            const key = normalizeUrl(a.toUrl);
+            if (!key || have.has(key) || seenDisc.has(key)) continue;
+            seenDisc.add(key);
+            discovered.push({ url: key, label: slugForUrl(key), category: 'explored' });
+          }
+        }
+        const budget = Math.max(0, cfg.maxPages - planned.length);
+        const toCapture = discovered.slice(0, budget);
+        if (toCapture.length > 0) {
+          logger.info(
+            pc.cyan(`Capturing ${toCapture.length} page(s) discovered via exploration…`),
+          );
+          const plannedExtra = planCaptures(toCapture, cfg);
+          const extraResults = await Promise.all(
+            plannedExtra.map((item) => limit(() => captureOne(item))),
+          );
+          results = results.concat(extraResults);
+        }
       }
 
       // Finish reading any in-flight asset/API bodies BEFORE the context closes.
