@@ -8,7 +8,18 @@ function withScheme(url: string): string {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`;
 }
 
-/** "https://huggingface.co" -> "huggingface" (first hostname label). */
+/**
+ * Generic subdomain prefixes that are NOT the brand — strip them so the site name
+ * is the brand, not the subdomain (e.g. app.notion.so -> "notion", not "app";
+ * api.together.ai -> "together", not "api").
+ */
+const SUBDOMAIN_PREFIXES = new Set([
+  'www', 'app', 'apps', 'api', 'web', 'go', 'get', 'my', 'dashboard', 'console',
+  'account', 'accounts', 'portal', 'admin', 'secure', 'login', 'auth', 'sso',
+  'dev', 'staging', 'beta', 'try', 'use',
+]);
+
+/** "https://app.notion.so" -> "notion" (brand label, skipping generic subdomains). */
 export function siteNameFromUrl(url: string): string {
   let host: string;
   try {
@@ -16,8 +27,13 @@ export function siteNameFromUrl(url: string): string {
   } catch {
     host = url;
   }
-  host = host.replace(/^www\./i, '');
-  const firstLabel = host.split('.')[0] ?? '';
+  const labels = host.split('.').filter(Boolean);
+  // Strip leading generic subdomain prefixes while a real domain.tld remains,
+  // so the brand label surfaces (app.notion.so -> notion.so -> "notion").
+  while (labels.length > 1 && SUBDOMAIN_PREFIXES.has(labels[0].toLowerCase())) {
+    labels.shift();
+  }
+  const firstLabel = labels[0] ?? '';
   return sanitizeSegment(firstLabel);
 }
 
