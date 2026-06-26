@@ -13,11 +13,41 @@ and Profiles; unknown sites fall back to a bounded same-domain crawl.
 
 ## Install
 
+Requires Node ≥ 18. Installing builds the TS and (best-effort) downloads the
+Chromium that Playwright drives — no separate build step needed.
+
+**As a global `screenshotter` command** — straight from GitHub:
+
 ```bash
-npm install
-npx playwright install chromium   # one-time browser download
-npm run build
+npm install -g github:collinear-apps/screenshotter
+screenshotter --help
 ```
+
+…or from a clone:
+
+```bash
+git clone https://github.com/collinear-apps/screenshotter && cd screenshotter
+npm install            # builds dist/ (prepare) + fetches Chromium (postinstall)
+npm link               # puts `screenshotter` on your PATH  (npm unlink -g screenshotter to remove)
+screenshotter --help
+```
+
+**Without a global command** — run it in-repo (identical):
+
+```bash
+git clone https://github.com/collinear-apps/screenshotter && cd screenshotter
+npm install
+node dist/index.js --help
+```
+
+> **Chromium:** `npm install` auto-downloads it. If that's skipped (offline/CI), it
+> prints a warning — finish with `npx playwright install chromium` (or `npm run setup`).
+
+> **As a Claude Code plugin:** this repo also ships `.mcp.json` + `.claude-plugin/`, so
+> the same package works as the `/screenshot` command / MCP tool inside Claude Code.
+
+See all commands with `screenshotter --help`, a subcommand's flags with
+`screenshotter <command> --help`, or the [Commands](#commands) section below.
 
 ## Usage
 
