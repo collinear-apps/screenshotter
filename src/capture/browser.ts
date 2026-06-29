@@ -1,6 +1,6 @@
 // Owned by Wave 1 / Agent B (capture engine).
-import { chromium, devices } from 'playwright';
-import type { Browser, BrowserContext, BrowserContextOptions } from 'playwright';
+import { chromium, firefox, webkit, devices } from 'playwright';
+import type { Browser, BrowserContext, BrowserContextOptions, BrowserType } from 'playwright';
 import type { RunConfig, Breakpoint, ColorScheme } from '../types';
 import { applyAuthToContextOptions } from '../auth';
 import { harTempPath } from '../api';
@@ -83,6 +83,31 @@ function modeBreakpoint(cfg: RunConfig): Breakpoint {
  * desktop UA. `isMobile`/`hasTouch` are applied for non-device mobile profiles
  * (e.g. tablet) so layout/media-queries resolve correctly.
  */
+/**
+ * Resolve the Playwright engine for a `--browser` value. Firefox/WebKit are
+ * different ENGINES (not Chromium channels) with different TLS/HTTP-2 fingerprints
+ * — the escape hatch for Chromium-tuned bot walls (e.g. Akamai/OpenTable, which
+ * RSTs bundled-Chromium's HTTP/2 but serves Firefox/WebKit fine). 'chrome'/'msedge'
+ * are real-Chromium channels (genuine fingerprint, needs the browser installed).
+ */
+export function pickEngine(channel?: string): {
+  type: BrowserType;
+  isChromium: boolean;
+  launchChannel?: string;
+} {
+  switch (channel) {
+    case 'firefox':
+      return { type: firefox, isChromium: false };
+    case 'webkit':
+      return { type: webkit, isChromium: false };
+    case 'chrome':
+    case 'msedge':
+      return { type: chromium, isChromium: true, launchChannel: channel };
+    default:
+      return { type: chromium, isChromium: true };
+  }
+}
+
 export function buildContextOptions(
   breakpoint: Breakpoint,
   colorScheme: ColorScheme,
@@ -99,15 +124,23 @@ export function buildContextOptions(
     opts = {
       viewport: { width: breakpoint.width, height: breakpoint.height },
       deviceScaleFactor: breakpoint.deviceScaleFactor,
-      // Prefer the live-engine-derived UA (drift-proof); fall back to DESKTOP_UA.
-      userAgent: userAgent ?? DESKTOP_UA,
     };
+    // Set the UA only when given (Chromium → derived Chrome UA). For Firefox/WebKit
+    // the caller passes none so the engine's NATIVE UA is kept — a spoofed Chrome UA
+    // would mismatch their fingerprint and defeat switching engines.
+    if (userAgent) opts.userAgent = userAgent;
     // Non-device mobile/tablet profiles still need mobile emulation flags so
     // responsive media queries and touch layouts resolve.
     if (breakpoint.isMobile) {
       opts.isMobile = true;
       opts.hasTouch = true;
     }
+  }
+
+  // Firefox doesn't support isMobile/hasTouch — strip them so it doesn't throw.
+  if (cfg.browserChannel === 'firefox') {
+    delete opts.isMobile;
+    delete opts.hasTouch;
   }
 
   // 2. Realistic browser headers (avoid bot-gated 403s on auth pages, etc.).
@@ -169,18 +202,22 @@ export async function launchSessionForVariant(
   breakpoint: Breakpoint,
   colorScheme: ColorScheme,
 ): Promise<BrowserSession> {
-  // Anti-bot launch levers: real browser channel (genuine fingerprint), headed
-  // (less detectable), and HTTP/1.1 (bypasses HTTP/2-fingerprint walls). Defaults
-  // match the historical headless-bundled-Chromium behavior.
-  const browser = await chromium.launch({
+  // Anti-bot launch levers: a different ENGINE (firefox/webkit) escapes Chromium-
+  // tuned fingerprint walls; a real Chromium channel (chrome/msedge) = genuine
+  // fingerprint; headed = less detectable; http1 = no HTTP/2 fingerprint. Defaults
+  // (no --browser, headless) match the historical bundled-Chromium behavior.
+  const eng = pickEngine(cfg.browserChannel);
+  const browser = await eng.type.launch({
     headless: !cfg.headed,
-    args: cfg.http1 ? [...ANTIBOT_ARGS, '--disable-http2'] : ANTIBOT_ARGS,
-    ...(cfg.browserChannel ? { channel: cfg.browserChannel } : {}),
+    // Chromium-only flags — Firefox/WebKit reject unknown chromium args.
+    ...(eng.isChromium ? { args: cfg.http1 ? [...ANTIBOT_ARGS, '--disable-http2'] : ANTIBOT_ARGS } : {}),
+    ...(eng.launchChannel ? { channel: eng.launchChannel } : {}),
   });
 
-  // Derive the UA from the REAL Chromium version so version-gated sites (Notion's
-  // "browser not compatible") don't reject us on a stale hardcoded version.
-  const opts = buildContextOptions(breakpoint, colorScheme, cfg, chromeUserAgent(browser.version()));
+  // Chromium: override UA to the real engine version (fixes version-gated blocks
+  // like Notion). Firefox/WebKit: keep their native UA (passing none).
+  const ua = eng.isChromium ? chromeUserAgent(browser.version()) : undefined;
+  const opts = buildContextOptions(breakpoint, colorScheme, cfg, ua);
 
   const context = await browser.newContext(opts);
 

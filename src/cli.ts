@@ -119,7 +119,7 @@ export async function main(argv: string[]): Promise<void> {
     .description('Open a browser to log in, then save the session for reuse via --auth')
     .option('-o, --out <file>', 'where to save the session JSON (default .auth/<site>.json)')
     .option('-m, --mode <mode>', 'web | mobile', 'web')
-    .option('--browser <name>', 'browser to drive: chromium (default) | chrome | msedge')
+    .option('--browser <name>', 'engine: chromium (default) | firefox | webkit | chrome | msedge')
     .option('--http1', 'force HTTP/1.1 (--disable-http2)')
     .action(async (url: string, opts: LoginOptions) => {
       const mode = asMode(opts.mode, 'web')!;
@@ -340,7 +340,7 @@ export async function main(argv: string[]): Promise<void> {
     // Phase 4 — runnable handoff (default on with --extract/--full)
     .option('--no-scaffold', 'do NOT emit the frontend scaffold + bundle index')
     // Anti-bot launch levers (for fingerprint-walled sites)
-    .option('--browser <name>', 'browser to drive: chromium (default) | chrome | msedge (real browser = better anti-bot fingerprint)')
+    .option('--browser <name>', 'engine: chromium (default) | firefox | webkit | chrome | msedge — firefox/webkit bypass Chromium-fingerprint bot walls (e.g. Akamai/OpenTable)')
     .option('--headed', 'launch a visible (non-headless) browser — less detectable by bot walls')
     .option('--http1', 'force HTTP/1.1 (--disable-http2) — bypasses HTTP/2-fingerprint bot walls')
     .allowExcessArguments(false)

@@ -111,9 +111,11 @@ captures a site; the others support gated sites, grading rebuilds, and appending
 | `--breakpoints <list>` | Capture a viewport matrix, e.g. `mobile,tablet,desktop,wide` |
 | `--dark` | Also capture a dark color-scheme pass |
 | `--auth <file>` | Use a saved session from `login` (capture gated pages) |
-| `--browser <chrome\|msedge>` | Drive the real installed browser (genuine fingerprint) instead of bundled Chromium — for bot-walled sites |
+| `--browser <firefox\|webkit\|chrome\|msedge>` | Use a different engine. **`firefox`/`webkit` bypass Chromium-fingerprint bot walls** (e.g. Akamai/OpenTable, which RSTs bundled Chromium's HTTP/2) — no install/sudo needed. `chrome`/`msedge` drive the real installed browser. |
 | `--headed` | Launch a visible browser (less detectable by bot walls) |
 | `--http1` | Force HTTP/1.1 (`--disable-http2`) — bypasses HTTP/2-fingerprint bot walls |
+
+> **Bot-walled site** (e.g. `ERR_HTTP2_PROTOCOL_ERROR`, or a "checking your browser"/access-denied capture)? Try **`--browser firefox`** first — Akamai/PerimeterX fingerprints are usually tuned for headless Chromium, and Firefox/WebKit sail through. Confirmed working on OpenTable.
 | `--scaffold` / `--no-scaffold` | Emit (or skip) a runnable rebuild scaffold + `bundle.json` index (on by default with `--extract`/`--full`) |
 | `--max-retries`,`--request-delay` | Capture-integrity: retry/backoff + per-host politeness for large crawls |
 

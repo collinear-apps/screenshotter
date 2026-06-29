@@ -3,12 +3,12 @@
 // save the context's storageState to `outFile` and return its path.
 //
 // Owned by Wave 1 / Agent E (auth modules). Never prints cookies/tokens.
-import { chromium, devices, type BrowserContext } from 'playwright';
+import { webkit, devices, type BrowserContext } from 'playwright';
 import { mkdir } from 'fs/promises';
 import * as path from 'path';
 import * as readline from 'readline';
 import type { Mode } from '../types';
-import { ANTIBOT_ARGS, chromeUserAgent } from '../capture/browser';
+import { ANTIBOT_ARGS, chromeUserAgent, pickEngine } from '../capture/browser';
 
 /**
  * Launch a headed browser at `url`, let a human authenticate interactively, and
@@ -29,10 +29,11 @@ export async function captureLogin(
   // Let launch failures (e.g. no display / missing browser) propagate clearly.
   // Honor the same anti-bot levers as capture so the saved session's fingerprint
   // matches (log in with real Chrome -> capture with real Chrome).
-  const browser = await chromium.launch({
+  const eng = pickEngine(launch.channel);
+  const browser = await eng.type.launch({
     headless: false,
-    args: launch.http1 ? [...ANTIBOT_ARGS, '--disable-http2'] : ANTIBOT_ARGS,
-    ...(launch.channel ? { channel: launch.channel } : {}),
+    ...(eng.isChromium ? { args: launch.http1 ? [...ANTIBOT_ARGS, '--disable-http2'] : ANTIBOT_ARGS } : {}),
+    ...(eng.launchChannel ? { channel: eng.launchChannel } : {}),
   });
 
   let context: BrowserContext | undefined;
@@ -41,16 +42,20 @@ export async function captureLogin(
     // storageState is viewport-independent, but give the user a layout that
     // matches the mode they intend to capture in. A realistic UA avoids bot-gated
     // login pages (e.g. HuggingFace) returning 403.
-    context =
-      mode === 'mobile'
-        ? await browser.newContext({ ...devices['iPhone 13'] })
-        : await browser.newContext({
-            viewport: { width: 1440, height: 900 },
-            // Derived from the real engine version so version-gated sites (Notion's
-            // "browser not compatible") accept the login window too.
-            userAgent: chromeUserAgent(browser.version()),
-            extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
-          });
+    // Chromium gets the real-version Chrome UA (fixes version-gated logins like
+    // Notion); Firefox/WebKit keep their native UA. Firefox can't do mobile
+    // emulation, so fall back to a desktop context there.
+    if (mode === 'mobile' && eng.isChromium) {
+      context = await browser.newContext({ ...devices['iPhone 13'] });
+    } else if (mode === 'mobile' && eng.type === webkit) {
+      context = await browser.newContext({ ...devices['iPhone 13'] });
+    } else {
+      context = await browser.newContext({
+        viewport: { width: 1440, height: 900 },
+        ...(eng.isChromium ? { userAgent: chromeUserAgent(browser.version()) } : {}),
+        extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
+      });
+    }
 
     const page = await context.newPage();
     // Don't hard-fail if the login page is slow or blocks `load`.
