@@ -102,6 +102,7 @@ captures a site; the others support gated sites, grading rebuilds, and appending
 | Flag | Adds |
 |------|------|
 | `--extract` | Real assets (fonts/images/CSS/JS) + rendered DOM + design tokens + a11y goldens + CSS vars + listings + entity graph |
+| `--a11y` | Capture **only** accessibility goldens (`.aria.yaml` / `.a11y.json`) — skips DOM/tokens/assets (fast, lean) |
 | `--api` | Network capture → inferred OpenAPI + endpoint catalog + HAR + **query/body-aware, stateful mock server** |
 | `--full` | Recursively click/record/screenshot every state (menus, modals, forms); writes `behaviors.json` |
 | `--aggressive` | With `--full`: also submit forms / mutate data (**DANGEROUS** — own/staging sites only) |

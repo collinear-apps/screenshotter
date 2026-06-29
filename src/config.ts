@@ -64,6 +64,8 @@ export interface BuildConfigInput {
   // ── Extraction (DOM + tokens + assets) ──
   /** Enable DOM + design-tokens + real-asset capture. */
   extract?: boolean;
+  /** Capture ONLY accessibility-tree goldens (skip DOM/tokens/assets/etc.). */
+  a11y?: boolean;
   /** Also save JavaScript bundles as assets. */
   assetsJs?: boolean;
   /** Emit normalized copies of DOM (default true). */
@@ -286,31 +288,34 @@ function buildDeterminismConfig(input: BuildConfigInput): DeterminismConfig {
 
 /** Extraction config — only present when --extract is set. */
 function buildExtractConfig(input: BuildConfigInput): ExtractConfig | undefined {
-  if (!input.extract) return undefined;
+  if (!input.extract && !input.a11y) return undefined;
+  // `--a11y` captures ONLY accessibility goldens — a fast, lean pass with every
+  // other extract sub-feature off. `--extract` is the full source-material capture.
+  const full = !input.a11y; // a11y flag narrows to a11y-only even alongside --extract
   return {
     enabled: true,
-    dom: true,
-    tokens: true,
-    assets: true,
+    dom: full,
+    tokens: full,
+    assets: full,
     assetTypes: {
-      fonts: true,
-      images: true,
-      svg: true,
-      css: true,
-      js: Boolean(input.assetsJs),
+      fonts: full,
+      images: full,
+      svg: full,
+      css: full,
+      js: full && Boolean(input.assetsJs),
     },
-    normalize: input.normalize !== false,
+    normalize: full && input.normalize !== false,
     maxAssetBytes: DEFAULTS.maxAssetBytes,
     a11y: true,
-    listings: true,
-    entities: true,
-    readme: true,
-    cssVars: true,
-    elementStates: true,
-    scrubHtml: true,
-    layout: true,
-    surfaces: true,
-    shadowDom: true,
+    listings: full,
+    entities: full,
+    readme: full,
+    cssVars: full,
+    elementStates: full,
+    scrubHtml: full,
+    layout: full,
+    surfaces: full,
+    shadowDom: full,
   };
 }
 

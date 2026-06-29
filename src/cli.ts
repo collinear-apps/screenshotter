@@ -39,6 +39,7 @@ interface CaptureOptions {
   interact: boolean;
   apiSearch?: string;
   extract?: boolean;
+  a11y?: boolean;
   assetsJs?: boolean;
   normalize: boolean;
   deterministic: boolean;
@@ -294,6 +295,7 @@ export async function main(argv: string[]): Promise<void> {
     .option('--api-search <term>', 'search term typed during interaction', 'a')
     // extraction (DOM + design tokens + real assets)
     .option('--extract', 'capture rendered DOM + design tokens + real downloaded assets')
+    .option('--a11y', 'capture ONLY accessibility goldens (.aria.yaml/.a11y.json) — skip DOM/tokens/assets')
     .option('--assets-js', 'with --extract, also save JavaScript bundles')
     .option('--no-normalize', 'with --extract, do NOT emit normalized DOM copies')
     // determinism (default on)
@@ -367,6 +369,7 @@ export async function main(argv: string[]): Promise<void> {
         apiInteract: options.interact,
         apiSearch: options.apiSearch,
         extract: options.extract,
+        a11y: options.a11y,
         assetsJs: options.assetsJs,
         normalize: options.normalize,
         deterministic: options.deterministic,

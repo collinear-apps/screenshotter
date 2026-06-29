@@ -420,8 +420,15 @@ export async function crawl(
           ),
         );
       }
-    } catch {
-      // Navigation/extraction failed: skip this page entirely.
+    } catch (err) {
+      // Navigation/extraction failed: skip this page. Surface the START page's
+      // failure (depth 0) loudly — otherwise a bot-walled / unreachable entry URL
+      // silently becomes "No pages found", which looks like a tool bug. The error
+      // (e.g. ERR_HTTP2_PROTOCOL_ERROR, timeout) tells the user it's the site.
+      if (depth === 0) {
+        const m = err instanceof Error ? err.message.split('\n')[0] : String(err);
+        console.error(`  Could not load ${url}: ${m}`);
+      }
     } finally {
       if (page) {
         try {
