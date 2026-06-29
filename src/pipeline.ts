@@ -17,7 +17,7 @@ import type {
 } from './types';
 import { launchSession, launchSessionForVariant, closeSession } from './capture/browser';
 import { settlePage } from './capture/prepare';
-import { gotoWithRetry, detectAuthState } from './capture/retry';
+import { gotoWithRetry, detectAuthState, detectChallenge, type ChallengeResult } from './capture/retry';
 import { buildManifest, writeManifest } from './output/manifest';
 import { captureScreenshot } from './capture/screenshot';
 import { interactForApi } from './capture/interact';
@@ -138,6 +138,8 @@ export async function run(
   // Phase 0 — capture integrity: per-route manifest records + single-flight re-auth.
   const startedAtISO = new Date().toISOString();
   const routeRecords: RouteCaptureRecord[] = [];
+  // URLs flagged as bot-wall/block pages — excluded from cross-page aggregates.
+  const challengedUrls = new Set<string>();
   let reauthInFlight: Promise<void> | null = null;
   // Total screenshots written across all passes (for the summary).
   let variantShots = 0;
@@ -198,6 +200,22 @@ export async function run(
             }
           }
 
+          // Detect bot-wall / CAPTCHA / compat / access-block pages (200 status but
+          // NOT the real site). Flag, don't fail: keep the screenshot + DOM + a11y as
+          // evidence, but EXCLUDE from cross-page aggregates so one block page can't
+          // poison the bundle (this is the silent failure the Notion/OpenTable runs hit).
+          let challenged = false;
+          let challengeReason: string | undefined;
+          {
+            const ch = await detectChallenge(page).catch((): ChallengeResult => ({ challenged: false }));
+            if (ch.challenged) {
+              challenged = true;
+              challengeReason = ch.reason;
+              challengedUrls.add(target.url);
+              logger.info(pc.yellow(`  ⚠ block/challenge on ${target.label}: ${ch.reason}`));
+            }
+          }
+
           // Kill animations/transitions for a stable frame.
           if (cfg.determinism?.enabled) {
             await page.addStyleTag({ content: ANIM_CSS }).catch(() => {});
@@ -233,16 +251,16 @@ export async function run(
               }
             }
           }
-          if (cfg.extract?.enabled && cfg.extract.tokens) {
+          if (cfg.extract?.enabled && cfg.extract.tokens && !challenged) {
             const t = await extractTokens(page).catch(() => null);
             if (t) pageTokensList.push(t);
           }
-          if (cfg.extract?.enabled && cfg.extract.cssVars) {
+          if (cfg.extract?.enabled && cfg.extract.cssVars && !challenged) {
             const v = await extractCssVars(page).catch(() => null);
             if (v) cssVarsList.push(v);
           }
           // Structured listing rows (real records, not just a screenshot).
-          if (cfg.extract?.enabled && cfg.extract.listings) {
+          if (cfg.extract?.enabled && cfg.extract.listings && !challenged) {
             const le = await extractListings(page, target.label, target.url).catch(() => null);
             if (le) {
               listingExtracts.push(le);
@@ -281,16 +299,18 @@ export async function run(
           // so concurrent captures never collide. Read-only passes (layout/surfaces)
           // run BEFORE element-states (which drives hover/focus/active and mutates
           // interaction state) — and all run AFTER the clean screenshot.
+          // Skipped on challenged pages (no point profiling a block page).
+          const tier3 = cfg.extract?.enabled && !challenged;
           const baseNoExt = absPath.replace(/\.png$/i, '');
           const modeRoot = path.join(cfg.outDir, cfg.mode);
           const relOf = (abs: string): string => path.relative(modeRoot, abs).split(path.sep).join('/');
-          if (cfg.extract?.enabled && cfg.extract.layout) {
+          if (tier3 && cfg.extract!.layout) {
             const rep = await captureLayout(page, target.label, target.url).catch(() => null);
             if (rep && rep.boxes.length > 0) {
               await fs.writeFile(`${baseNoExt}.layout.json`, JSON.stringify(rep, null, 2), 'utf8').catch(() => {});
             }
           }
-          if (cfg.extract?.enabled && cfg.extract.surfaces) {
+          if (tier3 && cfg.extract!.surfaces) {
             const absDir = `${baseNoExt}-surfaces`;
             const rep = await captureSurfaces(page, target.label, target.url, {
               absDir,
@@ -300,12 +320,12 @@ export async function run(
               await fs.writeFile(`${baseNoExt}.surfaces.json`, JSON.stringify(rep, null, 2), 'utf8').catch(() => {});
             }
           }
-          if (cfg.extract?.enabled && cfg.extract.elementStates) {
+          if (tier3 && cfg.extract!.elementStates) {
             const absDir = `${baseNoExt}-states`;
             const rep = await captureElementStates(page, target.label, target.url, {
               absDir,
               relBase: relOf(absDir),
-              cfg: cfg.extract,
+              cfg: cfg.extract!,
             }).catch(() => null);
             if (rep && rep.elements.length > 0) {
               await fs.writeFile(`${baseNoExt}.element-states.json`, JSON.stringify(rep, null, 2), 'utf8').catch(() => {});
@@ -330,6 +350,7 @@ export async function run(
             status: gr.status,
             authState,
             retries: gr.retries,
+            ...(challenged ? { challenged: true, challengeReason } : {}),
           });
           done++;
           logger.info(
@@ -364,10 +385,11 @@ export async function run(
         planned.map((item) => limit(() => captureOne(item))),
       );
 
-      // 4. Aggregate typography from successful captures.
+      // 4. Aggregate typography from successful captures (excluding challenged/
+      //    block pages so a bot-wall can't skew the type scale).
       const typographies: PageTypography[] = results
         .filter((r): r is CaptureResult & { typography: PageTypography } =>
-          Boolean(r.ok && r.typography),
+          Boolean(r.ok && r.typography && !challengedUrls.has(r.target.url)),
         )
         .map((r) => r.typography);
 
@@ -917,6 +939,14 @@ export async function run(
     for (const f of failed) {
       logger.info(pc.red(`    - ${f.target.url}`));
     }
+  }
+  if (challengedUrls.size > 0) {
+    logger.info(
+      pc.yellow(
+        `  ⚠ ${challengedUrls.size}/${succeeded.length} captured page(s) were bot-wall/block pages, ` +
+          `NOT the real site — bundle may be an unusable reference. Try --browser firefox.`,
+      ),
+    );
   }
   logger.info(`  Output dir: ${pc.cyan(cfg.outDir)}`);
   // Total screenshots written: one per captured page + breakpoint/dark variants +

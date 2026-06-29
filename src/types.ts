@@ -654,6 +654,11 @@ export interface RouteCaptureRecord {
   retries?: number;
   /** True if content was truncated / partially captured. */
   truncated?: boolean;
+  /** True if this capture is a bot-wall / CAPTCHA / compat / access-block page
+   *  (200 status but not the real site) — excluded from cross-page aggregates. */
+  challenged?: boolean;
+  /** Why it was flagged (e.g. "Cloudflare interstitial", "Access block"). */
+  challengeReason?: string;
 }
 
 /** A machine-readable manifest of what was (and wasn't) captured this run. */
@@ -661,7 +666,14 @@ export interface RunManifest {
   site: string;
   startedAtISO: string;
   mode: Mode;
-  totals: { captured: number; failed: number; throttled: number; anonymous: number };
+  totals: {
+    captured: number;
+    failed: number;
+    throttled: number;
+    anonymous: number;
+    /** Routes that were bot-walls / CAPTCHA / compat / access blocks, not real UI. */
+    challenged: number;
+  };
   routes: RouteCaptureRecord[];
   notes?: string[];
 }

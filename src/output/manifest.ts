@@ -22,6 +22,7 @@ export function buildManifest(
   // recovered, which is also a politeness/degradation signal worth surfacing.
   const throttled = list.filter((r) => r.status === 429 || (r.retries ?? 0) > 0).length;
   const anonymous = list.filter((r) => r.authState === 'anonymous').length;
+  const challenged = list.filter((r) => r.challenged === true).length;
 
   const retried = list.filter((r) => (r.retries ?? 0) > 0).length;
   const truncated = list.filter((r) => r.truncated === true).length;
@@ -57,12 +58,19 @@ export function buildManifest(
       `${truncated} route(s) were truncated / only partially captured (content may be incomplete).`,
     );
   }
+  if (challenged > 0) {
+    notes.push(
+      `${challenged} of ${list.length} route(s) were bot-wall / CAPTCHA / compat / access-block ` +
+        `pages (200 status, NOT the real site) — excluded from aggregates. The bundle may be an ` +
+        `UNUSABLE reference. Re-capture with a different engine (e.g. --browser firefox).`,
+    );
+  }
 
   const manifest: RunManifest = {
     site,
     startedAtISO,
     mode,
-    totals: { captured, failed, throttled, anonymous },
+    totals: { captured, failed, throttled, anonymous, challenged },
     routes: list,
   };
   if (notes.length > 0) manifest.notes = notes;

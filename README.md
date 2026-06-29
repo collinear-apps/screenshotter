@@ -115,7 +115,15 @@ captures a site; the others support gated sites, grading rebuilds, and appending
 | `--headed` | Launch a visible browser (less detectable by bot walls) |
 | `--http1` | Force HTTP/1.1 (`--disable-http2`) — bypasses HTTP/2-fingerprint bot walls |
 
-> **Bot-walled site** (e.g. `ERR_HTTP2_PROTOCOL_ERROR`, or a "checking your browser"/access-denied capture)? Try **`--browser firefox`** first — Akamai/PerimeterX fingerprints are usually tuned for headless Chromium, and Firefox/WebKit sail through. Confirmed working on OpenTable.
+> **Bot-walled site** (e.g. `ERR_HTTP2_PROTOCOL_ERROR`, "checking your browser", access-denied, or an "embarrassing"/maintenance shell in the capture)? The recipe — confirmed on OpenTable/Akamai:
+> ```bash
+> screenshotter https://www.opentable.com/ --browser firefox --no-deterministic --request-delay 2000 --extract --sub-links
+> ```
+> - **`--browser firefox`** (or `webkit`) — different TLS/HTTP-2 fingerprint than headless Chromium, which is what most walls block.
+> - **`--no-deterministic`** — the frozen-clock / seeded-`Math.random` injection is detectable by behavioral sensors (Akamai); turning it off lets the real page render.
+> - **`--request-delay <ms>`** — politeness to avoid rate-limiting on a crawl.
+>
+> Any capture that's actually a block page is now **flagged** in `run-manifest.json` (`totals.challenged`) and the run summary, and excluded from the design-token/typography/entity aggregates — so a poisoned bundle reports itself instead of silently becoming a bad reference.
 | `--scaffold` / `--no-scaffold` | Emit (or skip) a runnable rebuild scaffold + `bundle.json` index (on by default with `--extract`/`--full`) |
 | `--max-retries`,`--request-delay` | Capture-integrity: retry/backoff + per-host politeness for large crawls |
 

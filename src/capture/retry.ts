@@ -274,6 +274,71 @@ export async function detectAuthState(page: Page): Promise<RouteAuthState> {
   return 'unknown';
 }
 
+/** Result of a bot-wall / block-page probe. */
+export interface ChallengeResult {
+  challenged: boolean;
+  reason?: string;
+  kind?: 'cloudflare' | 'captcha' | 'compat' | 'access' | 'thin';
+}
+
+/**
+ * Read-only probe for "this 200 response isn't the real site" pages: bot-wall
+ * interstitials (Cloudflare), CAPTCHAs, browser-compat blocks, and access denials
+ * (Akamai/PerimeterX/Imperva). These return HTTP 200 with block content, so the
+ * crawler would otherwise capture them as successful pages and silently poison the
+ * bundle. Matches on STRONG signals (known interstitial iframes + phrases); a
+ * suspiciously-thin DOM is reported only as a soft companion. Never throws / clicks.
+ */
+export async function detectChallenge(page: Page): Promise<ChallengeResult> {
+  try {
+    const probe = page.evaluate(() => {
+      const text = (document.body?.innerText || '').slice(0, 4000);
+      const has = (sel: string): boolean => !!document.querySelector(sel);
+      const m = (re: RegExp): boolean => re.test(text);
+      // Bounded node count for the thin-shell soft signal.
+      const nodes = document.querySelectorAll('*').length;
+
+      if (
+        has('iframe[src*="challenges.cloudflare.com"]') ||
+        has('#challenge-running, #cf-challenge-running, [class*="cf-"][class*="challenge" i]') ||
+        m(/just a moment|checking your browser|attention required|cf-browser-verification/i)
+      ) {
+        return { challenged: true, kind: 'cloudflare', reason: 'Cloudflare/bot interstitial' };
+      }
+      if (
+        has('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],iframe[title*="captcha" i],.g-recaptcha,.h-captcha') ||
+        m(/verify you are (a )?human|complete the captcha|unusual traffic from your/i)
+      ) {
+        return { challenged: true, kind: 'captcha', reason: 'CAPTCHA / human-verification' };
+      }
+      if (m(/not compatible with|unsupported browser|upgrade (your|to a) .{0,20}browser|please use a (modern|supported|different) browser/i)) {
+        return { challenged: true, kind: 'compat', reason: 'Browser-compatibility block' };
+      }
+      if (m(/access denied|access to this page has been denied|pardon our interruption|you (have been|are being) blocked|request blocked|reference #?\d|error[ -]?54\d|akamai/i)) {
+        return { challenged: true, kind: 'access', reason: 'Access / bot block' };
+      }
+      // Soft error/maintenance shells that bot defenses serve in place of the page
+      // (e.g. OpenTable's "Well, this is embarrassing… we're aware of the issue").
+      if (m(/this is embarrassing|we'?re aware of the (issue|problem)|it'?s not you,? it'?s us|something went wrong.{0,40}(try again|helpful links)/i)) {
+        return { challenged: true, kind: 'access', reason: 'Error/maintenance shell (not the real page)' };
+      }
+      // Soft: a near-empty shell on a route that should be rich. Only flagged when
+      // the page is essentially contentless (avoids false positives on real pages).
+      if (nodes < 60 && text.replace(/\s+/g, '').length < 200) {
+        return { challenged: true, kind: 'thin', reason: 'Suspiciously empty page (possible block/error shell)' };
+      }
+      return { challenged: false };
+    }) as Promise<ChallengeResult>;
+    probe.catch(() => undefined);
+    const timeout = new Promise<ChallengeResult>((resolve) =>
+      setTimeout(() => resolve({ challenged: false }), 2000),
+    );
+    return await Promise.race([probe, timeout]);
+  } catch {
+    return { challenged: false };
+  }
+}
+
 /** Reset the per-host throttle clock. Exposed for tests / fresh runs. */
 export function resetHostThrottle(): void {
   lastHostTs.clear();
