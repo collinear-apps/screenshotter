@@ -169,7 +169,14 @@ export async function launchSessionForVariant(
   breakpoint: Breakpoint,
   colorScheme: ColorScheme,
 ): Promise<BrowserSession> {
-  const browser = await chromium.launch({ headless: true, args: ANTIBOT_ARGS });
+  // Anti-bot launch levers: real browser channel (genuine fingerprint), headed
+  // (less detectable), and HTTP/1.1 (bypasses HTTP/2-fingerprint walls). Defaults
+  // match the historical headless-bundled-Chromium behavior.
+  const browser = await chromium.launch({
+    headless: !cfg.headed,
+    args: cfg.http1 ? [...ANTIBOT_ARGS, '--disable-http2'] : ANTIBOT_ARGS,
+    ...(cfg.browserChannel ? { channel: cfg.browserChannel } : {}),
+  });
 
   // Derive the UA from the REAL Chromium version so version-gated sites (Notion's
   // "browser not compatible") don't reject us on a stale hardcoded version.

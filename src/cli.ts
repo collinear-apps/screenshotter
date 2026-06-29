@@ -71,11 +71,17 @@ interface CaptureOptions {
   paginate?: boolean;
   // Phase 4
   scaffold?: boolean;
+  // anti-bot
+  browser?: string;
+  headed?: boolean;
+  http1?: boolean;
 }
 
 interface LoginOptions {
   out?: string;
   mode?: string;
+  browser?: string;
+  http1?: boolean;
 }
 
 /** Parses an integer flag, falling back to `fallback` on NaN/empty. */
@@ -113,11 +119,14 @@ export async function main(argv: string[]): Promise<void> {
     .description('Open a browser to log in, then save the session for reuse via --auth')
     .option('-o, --out <file>', 'where to save the session JSON (default .auth/<site>.json)')
     .option('-m, --mode <mode>', 'web | mobile', 'web')
+    .option('--browser <name>', 'browser to drive: chromium (default) | chrome | msedge')
+    .option('--http1', 'force HTTP/1.1 (--disable-http2)')
     .action(async (url: string, opts: LoginOptions) => {
       const mode = asMode(opts.mode, 'web')!;
       const normalized = normalizeBaseUrl(url);
       const outFile = opts.out ?? path.join('.auth', `${siteNameFromUrl(normalized)}.json`);
-      const saved = await captureLogin(normalized, outFile, mode);
+      const channel = opts.browser && opts.browser !== 'chromium' ? opts.browser : undefined;
+      const saved = await captureLogin(normalized, outFile, mode, { channel, http1: opts.http1 });
       console.log(`Session saved → ${saved}`);
       console.log(`Reuse it with:  screenshotter ${normalized} --auth ${saved}`);
     });
@@ -330,6 +339,10 @@ export async function main(argv: string[]): Promise<void> {
     .option('--paginate', 'mint pagination / load-more targets during discovery')
     // Phase 4 — runnable handoff (default on with --extract/--full)
     .option('--no-scaffold', 'do NOT emit the frontend scaffold + bundle index')
+    // Anti-bot launch levers (for fingerprint-walled sites)
+    .option('--browser <name>', 'browser to drive: chromium (default) | chrome | msedge (real browser = better anti-bot fingerprint)')
+    .option('--headed', 'launch a visible (non-headless) browser — less detectable by bot walls')
+    .option('--http1', 'force HTTP/1.1 (--disable-http2) — bypasses HTTP/2-fingerprint bot walls')
     .allowExcessArguments(false)
     .action(async (urlArg: string | undefined, options: CaptureOptions) => {
       const modeInput = asMode(options.mode);
@@ -403,6 +416,10 @@ export async function main(argv: string[]): Promise<void> {
         paginate: options.paginate,
         // Phase 4 — only force OFF explicitly; otherwise config defaults it on with extract/full.
         scaffold: options.scaffold === false ? false : undefined,
+        // anti-bot launch levers
+        browser: options.browser,
+        headed: options.headed,
+        http1: options.http1,
       });
 
       // Loud warning when aggressive exploration is enabled (it mutates real data).

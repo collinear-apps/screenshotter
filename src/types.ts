@@ -43,6 +43,14 @@ export interface RunConfig {
   paginate: boolean;
   /** Phase 4 — emit a runnable frontend scaffold + bundle index into the zip. */
   scaffold: boolean;
+  // ── Anti-bot launch levers (for fingerprint-walled sites) ──
+  /** Browser channel: undefined = bundled Chromium; 'chrome'/'msedge' = the
+   *  installed real browser (genuine TLS/HTTP-2 fingerprint, often passes Akamai). */
+  browserChannel?: string;
+  /** Launch headed (visible) — less detectable than headless by bot walls. */
+  headed: boolean;
+  /** Force HTTP/1.1 (--disable-http2) — bypasses HTTP/2-fingerprint bot walls. */
+  http1: boolean;
   /** Optional authentication for gated sites. */
   auth?: AuthConfig;
   /** Optional network/API capture. */

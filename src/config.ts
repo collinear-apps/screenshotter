@@ -126,6 +126,14 @@ export interface BuildConfigInput {
   // ── Phase 4: runnable handoff ──
   /** Emit a runnable frontend scaffold + bundle index (default on when --extract or --full). */
   scaffold?: boolean;
+
+  // ── Anti-bot launch levers ──
+  /** Browser channel: 'chrome' | 'msedge' (real browser) vs bundled Chromium. */
+  browser?: string;
+  /** Launch headed (visible). */
+  headed?: boolean;
+  /** Force HTTP/1.1 (adds --disable-http2). */
+  http1?: boolean;
 }
 
 const DEFAULTS = {
@@ -368,6 +376,9 @@ export function buildRunConfig(input: BuildConfigInput): RunConfig {
     paginate: Boolean(input.paginate),
     // Scaffold defaults ON when we're producing rebuild material (extract or full).
     scaffold: input.scaffold ?? Boolean(input.extract || input.full),
+    browserChannel: input.browser && input.browser !== 'chromium' ? input.browser : undefined,
+    headed: Boolean(input.headed),
+    http1: Boolean(input.http1),
     auth: buildAuthConfig(input),
     api: buildApiConfig(input),
     determinism: buildDeterminismConfig(input),

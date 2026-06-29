@@ -111,6 +111,9 @@ captures a site; the others support gated sites, grading rebuilds, and appending
 | `--breakpoints <list>` | Capture a viewport matrix, e.g. `mobile,tablet,desktop,wide` |
 | `--dark` | Also capture a dark color-scheme pass |
 | `--auth <file>` | Use a saved session from `login` (capture gated pages) |
+| `--browser <chrome\|msedge>` | Drive the real installed browser (genuine fingerprint) instead of bundled Chromium — for bot-walled sites |
+| `--headed` | Launch a visible browser (less detectable by bot walls) |
+| `--http1` | Force HTTP/1.1 (`--disable-http2`) — bypasses HTTP/2-fingerprint bot walls |
 | `--scaffold` / `--no-scaffold` | Emit (or skip) a runnable rebuild scaffold + `bundle.json` index (on by default with `--extract`/`--full`) |
 | `--max-retries`,`--request-delay` | Capture-integrity: retry/backoff + per-host politeness for large crawls |
 

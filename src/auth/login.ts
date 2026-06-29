@@ -24,9 +24,16 @@ export async function captureLogin(
   url: string,
   outFile: string,
   mode: Mode,
+  launch: { channel?: string; http1?: boolean } = {},
 ): Promise<string> {
   // Let launch failures (e.g. no display / missing browser) propagate clearly.
-  const browser = await chromium.launch({ headless: false, args: ANTIBOT_ARGS });
+  // Honor the same anti-bot levers as capture so the saved session's fingerprint
+  // matches (log in with real Chrome -> capture with real Chrome).
+  const browser = await chromium.launch({
+    headless: false,
+    args: launch.http1 ? [...ANTIBOT_ARGS, '--disable-http2'] : ANTIBOT_ARGS,
+    ...(launch.channel ? { channel: launch.channel } : {}),
+  });
 
   let context: BrowserContext | undefined;
   let rl: readline.Interface | undefined;
